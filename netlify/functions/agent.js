@@ -9,6 +9,8 @@
 //   GEMINI_API_KEY   - your Gemini API key
 //   GEMINI_MODEL     - optional, defaults to "gemini-2.5-flash"
 
+const { getClient } = require("./_supabase");
+
 const MODEL = process.env.GEMINI_MODEL || "gemini-2.5-flash";
 const API_KEY = process.env.GEMINI_API_KEY;
 
@@ -113,6 +115,21 @@ exports.handler = async (event) => {
     return { statusCode: 400, body: JSON.stringify({ error: "Missing 'goal'" }) };
   }
 
+  let supabase;
+  let taskId;
+  try {
+    supabase = getClient();
+    const { data, error } = await supabase
+      .from("mkdai_tasks")
+      .insert({ goal, status: "running" })
+      .select("id")
+      .single();
+    if (error) throw error;
+    taskId = data.id;
+  } catch (err) {
+    return { statusCode: 500, body: JSON.stringify({ error: `Database error: ${err.message}` }) };
+  }
+
   const steps = [];
   let context = "";
 
@@ -152,14 +169,22 @@ Give a clear, concrete, well-organized answer. If you are unsure or the informat
   try {
     const { answer, sources } = await callGemini({ prompt, useSearch });
     steps.push("Done.");
+    await supabase
+      .from("mkdai_tasks")
+      .update({ status: "done", answer, sources, steps, updated_at: new Date().toISOString() })
+      .eq("id", taskId);
     return {
       statusCode: 200,
-      body: JSON.stringify({ answer, sources, steps }),
+      body: JSON.stringify({ id: taskId, answer, sources, steps }),
     };
   } catch (err) {
+    await supabase
+      .from("mkdai_tasks")
+      .update({ status: "error", error: err.message, steps, updated_at: new Date().toISOString() })
+      .eq("id", taskId);
     return {
       statusCode: 500,
-      body: JSON.stringify({ error: err.message, steps }),
+      body: JSON.stringify({ id: taskId, error: err.message, steps }),
     };
   }
 };

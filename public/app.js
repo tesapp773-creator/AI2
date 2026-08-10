@@ -1,5 +1,3 @@
-const STORAGE_KEY = "mkdai_results_v1";
-
 const goalInput = document.getElementById("goalInput");
 const fileInput = document.getElementById("fileInput");
 const fileNameEl = document.getElementById("fileName");
@@ -21,22 +19,18 @@ fileInput.addEventListener("change", async () => {
   attachedFileText = await file.text();
 });
 
-function loadResults() {
+async function fetchResults() {
   try {
-    return JSON.parse(localStorage.getItem(STORAGE_KEY) || "[]");
+    const res = await fetch("/api/tasks");
+    const data = await res.json();
+    return data.tasks || [];
   } catch {
     return [];
   }
 }
 
-function saveResult(entry) {
-  const results = loadResults();
-  results.unshift(entry);
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(results.slice(0, 50)));
-}
-
-function renderResults() {
-  const results = loadResults();
+async function renderResults() {
+  const results = await fetchResults();
   resultsList.innerHTML = "";
   if (results.length === 0) {
     resultsList.innerHTML = '<p style="color:var(--muted); font-size:13px;">Nothing yet — run a task above.</p>';
@@ -44,7 +38,8 @@ function renderResults() {
   }
   for (const r of results) {
     const card = document.createElement("div");
-    card.className = "result-card" + (r.error ? " error" : "");
+    const isError = r.status === "error";
+    card.className = "result-card" + (isError ? " error" : "");
 
     const goalEl = document.createElement("div");
     goalEl.className = "goal";
@@ -53,7 +48,13 @@ function renderResults() {
 
     const answerEl = document.createElement("div");
     answerEl.className = "answer";
-    answerEl.textContent = r.error ? `Error: ${r.error}` : r.answer;
+    if (isError) {
+      answerEl.textContent = `Error: ${r.error}`;
+    } else if (r.status === "running" || r.status === "pending") {
+      answerEl.textContent = "Still working...";
+    } else {
+      answerEl.textContent = r.answer;
+    }
     card.appendChild(answerEl);
 
     if (r.sources && r.sources.length) {
@@ -73,7 +74,7 @@ function renderResults() {
 
     const metaEl = document.createElement("div");
     metaEl.className = "meta";
-    metaEl.textContent = new Date(r.timestamp).toLocaleString();
+    metaEl.textContent = new Date(r.created_at).toLocaleString();
     card.appendChild(metaEl);
 
     resultsList.appendChild(card);
@@ -104,16 +105,10 @@ async function runTask() {
       body: JSON.stringify({ goal, fileText: attachedFileText }),
     });
     const data = await res.json();
-
     if (data.steps) setSteps(data.steps);
-
-    if (!res.ok) {
-      saveResult({ goal, error: data.error || "Something went wrong", timestamp: Date.now() });
-    } else {
-      saveResult({ goal, answer: data.answer, sources: data.sources, timestamp: Date.now() });
-    }
-  } catch (err) {
-    saveResult({ goal, error: err.message, timestamp: Date.now() });
+    // The function already wrote the result (or error) to Supabase — just re-render from there.
+  } catch {
+    // Network-level failure before the function could even respond; nothing was saved.
   } finally {
     statusEl.classList.add("hidden");
     runBtn.disabled = false;
@@ -121,7 +116,7 @@ async function runTask() {
     fileInput.value = "";
     fileNameEl.textContent = "";
     attachedFileText = "";
-    renderResults();
+    await renderResults();
   }
 }
 
