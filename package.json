@@ -1,0 +1,9 @@
+{
+  "name": "mkdai",
+  "version": "1.0.0",
+  "description": "MKDAI - a personal AI agent that searches the web, reads pages, and summarizes files on command.",
+  "private": true,
+  "scripts": {
+    "dev": "netlify dev"
+  }
+}
