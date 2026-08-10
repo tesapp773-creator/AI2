@@ -11,7 +11,7 @@
 
 const { getClient } = require("./_supabase");
 
-const MODEL = process.env.GEMINI_MODEL || "gemini-2.5-flash";
+const MODEL = process.env.GEMINI_MODEL || "gemini-3.5-flash";
 const API_KEY = process.env.GEMINI_API_KEY;
 
 // Pull the first http(s) URL out of a string, if any.
