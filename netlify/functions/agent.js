@@ -11,8 +11,8 @@
 
 const { getClient } = require("./_supabase");
 
-const MODEL = process.env.GEMINI_MODEL || "gemini-3.5-flash";
-const API_KEY = process.env.GEMINI_API_KEY;
+const MODEL = process.env.GROQ_MODEL || "openai/gpt-oss-120b";
+const API_KEY = process.env.GROQ_API_KEY;
 
 // Pull the first http(s) URL out of a string, if any.
 function extractUrl(text) {
@@ -47,45 +47,32 @@ async function fetchPageText(url) {
   }
 }
 
-async function callGemini({ prompt, useSearch }) {
+async function callGroq({ prompt }) {
   const body = {
-    contents: [{ role: "user", parts: [{ text: prompt }] }],
+    model: MODEL,
+    messages: [{ role: "user", content: prompt }],
   };
-  if (useSearch) {
-    body.tools = [{ google_search: {} }];
-  }
 
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/${MODEL}:generateContent?key=${API_KEY}`;
-  const res = await fetch(url, {
+  const res = await fetch("https://api.groq.com/openai/v1/chat/completions", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${API_KEY}`,
+    },
     body: JSON.stringify(body),
   });
 
   if (!res.ok) {
     const errText = await res.text();
-    throw new Error(`Gemini API error (${res.status}): ${errText.slice(0, 500)}`);
+    throw new Error(`Groq API error (${res.status}): ${errText.slice(0, 500)}`);
   }
 
   const data = await res.json();
-  const candidate = data.candidates && data.candidates[0];
-  const answer =
-    (candidate &&
-      candidate.content &&
-      candidate.content.parts &&
-      candidate.content.parts.map((p) => p.text || "").join("\n")) ||
-    "(no response)";
+  const answer = (data.choices && data.choices[0] && data.choices[0].message.content) || "(no response)";
 
-  // Pull out grounding sources if Gemini used search.
-  let sources = [];
-  const grounding = candidate && candidate.groundingMetadata;
-  if (grounding && grounding.groundingChunks) {
-    sources = grounding.groundingChunks
-      .map((c) => c.web && { title: c.web.title, url: c.web.uri })
-      .filter(Boolean);
-  }
-
-  return { answer, sources };
+  // Groq's free models don't do live web search grounding, so there are no
+  // machine-verified sources to attach here (unlike Gemini's search grounding).
+  return { answer, sources: [] };
 }
 
 exports.handler = async (event) => {
@@ -97,7 +84,7 @@ exports.handler = async (event) => {
       statusCode: 500,
       body: JSON.stringify({
         error:
-          "GEMINI_API_KEY is not set on the server. Add it in Netlify > Site configuration > Environment variables, then redeploy.",
+          "GROQ_API_KEY is not set on the server. Add it in Netlify > Site configuration > Environment variables, then redeploy.",
       }),
     };
   }
@@ -152,22 +139,17 @@ exports.handler = async (event) => {
     context += `\n\nContent from the user's attached file:\n${fileText.slice(0, 15000)}\n`;
   }
 
-  // Decide whether Gemini should also search the web itself:
-  // - always useful for open-ended research/job-search style goals
-  // - skip only when we already fetched a specific page and the goal is just "summarize this"
-  const useSearch = true;
-
   const prompt = `You are MKDAI, a helpful personal research and task assistant.
 The user's goal:
 """${goal}"""
 ${context ? `\nUse the following extra context if relevant:${context}` : ""}
 
-Give a clear, concrete, well-organized answer. If you are unsure or the information may be outdated, say so plainly. If sources were used, they will be listed separately, so do not fabricate citations yourself.`;
+Give a clear, concrete, well-organized answer. You do not have live web search — base your answer on the context above (if any) and your own knowledge, and say plainly if something may be outdated or you're not sure, rather than guessing at current facts (like today's job listings) you can't actually verify.`;
 
   steps.push("Thinking and gathering the answer...");
 
   try {
-    const { answer, sources } = await callGemini({ prompt, useSearch });
+    const { answer, sources } = await callGroq({ prompt });
     steps.push("Done.");
     await supabase
       .from("mkdai_tasks")

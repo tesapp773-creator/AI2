@@ -5,16 +5,17 @@ reads a page you link, or summarizes a file you attach — then shows you a
 clear answer with sources.
 
 ## What this v1 does
-- **Web research**: ask it anything and it uses Google Search grounding (via Gemini) to find current info.
-- **Read a specific page**: paste a URL in your goal ("summarize https://...") and it fetches that page first.
+- **Reasoning/summarizing**: runs on Groq (free, fast, no billing card required) to answer, research from context, and summarize.
+- **Read a specific page**: paste a URL in your goal ("summarize https://...") and it fetches that page first, then summarizes/answers using its actual content.
 - **Summarize a file**: attach a .txt/.md/.csv/.json/.log file and ask it to summarize or extract from it.
 - **Persistent results (real database)**: every task is stored in a Supabase Postgres table (`mkdai_tasks`), so results show up on any device you open the app from — not just the browser you ran it in.
 
 ## What v1 does *not* do yet
-- True "close the app, come back later, get notified" background jobs — Netlify's free functions run for a bounded time per request, so tasks run while the page is open. The database is already in place for this, though — adding a queue + email/push notification step later is a natural next step, not a rebuild.
+- **Live web search**: Groq's free models don't have built-in search grounding like Gemini does, so open-ended "search the web for X" goals rely on the model's own training knowledge, not live results — it will say so when it's unsure. Adding real search (e.g. via Tavily's free tier, built for exactly this) is a clean next step.
+- **True background jobs + notifications**: Netlify's free functions run for a bounded time per request, so tasks run while the page is open. The database is already in place for this, though — adding a queue + email/push notification step later is a natural next step, not a rebuild.
 
-## 1. Get a Gemini API key
-Go to https://aistudio.google.com/apikey and create a key.
+## 1. Get a Groq API key
+Go to https://console.groq.com/keys and create a key. No credit card required, free tier included.
 
 ## 2. Supabase (already set up)
 This project uses a Supabase project that's already live, with the `mkdai_tasks` table created:
@@ -39,10 +40,10 @@ git push -u origin main
 1. Netlify dashboard → "Add new site" → "Import an existing project" → pick this repo.
 2. Build settings: leave as detected (publish directory `public`, functions directory `netlify/functions`) — already set in `netlify.toml`.
 3. Site configuration → Environment variables → add:
-   - `GEMINI_API_KEY` = your key from step 1
+   - `GROQ_API_KEY` = your key from step 1
    - `SUPABASE_URL` = `https://flipqcruvtujomcunhet.supabase.co`
    - `SUPABASE_ANON_KEY` = the anon/publishable key (see below)
-   - (optional) `GEMINI_MODEL` = a specific Gemini model name, if you want to override the default
+   - (optional) `GROQ_MODEL` = a specific Groq model name, if you want to override the default (`openai/gpt-oss-120b`)
 4. Deploy.
 
 To get the Supabase anon key: Supabase dashboard → your project → Settings → API → copy the `anon` `public` key.
