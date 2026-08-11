@@ -3,20 +3,20 @@
 // MKDAI manager function.
 // Receives a goal, then runs a manager loop: Groq (the "brain") decides
 // which worker tool(s) to call — write/PR to GitHub, trigger a Netlify
-// deploy, delegate a sub-task to Claude, or fetch a web page — executes
-// them, feeds results back, and repeats until it has a final answer.
+// deploy, delegate a sub-task to a bigger AI model, or fetch a web page —
+// executes them, feeds results back, and repeats until it has a final answer.
 //
 // Env vars (Netlify > Site configuration > Environment variables):
-//   GROQ_API_KEY            - required, powers the manager's reasoning
+//   GROQ_API_KEY            - required, powers the manager's reasoning AND the delegate worker
 //   GROQ_MODEL              - optional, defaults to "openai/gpt-oss-120b"
+//   GROQ_DELEGATE_MODEL     - optional, defaults to "llama-3.3-70b-versatile"
 //   SUPABASE_URL / SUPABASE_ANON_KEY - required, task history
 //   GITHUB_TOKEN            - optional, enables the GitHub worker
 //   GITHUB_REPO             - optional, "owner/repo" the GitHub worker acts on
 //   NETLIFY_BUILD_HOOK_URL  - optional, enables the Netlify deploy worker
-//   ANTHROPIC_API_KEY       - optional, enables the Claude delegate worker
 
 const { getClient } = require("./_supabase");
-const { githubWriteFile, githubCreatePullRequest, netlifyDeploy, claudeDelegate } = require("./_tools");
+const { githubWriteFile, githubCreatePullRequest, netlifyDeploy, aiDelegate } = require("./_tools");
 
 const MODEL = process.env.GROQ_MODEL || "openai/gpt-oss-120b";
 const API_KEY = process.env.GROQ_API_KEY;
@@ -85,11 +85,11 @@ const TOOLS = [
   {
     type: "function",
     function: {
-      name: "claude_delegate",
-      description: "Delegate a complex reasoning, writing, or coding sub-task to Claude and get back its answer.",
+      name: "ai_delegate",
+      description: "Delegate a complex reasoning, writing, or coding sub-task to a bigger AI model and get back its answer.",
       parameters: {
         type: "object",
-        properties: { task: { type: "string", description: "The sub-task/prompt to send to Claude." } },
+        properties: { task: { type: "string", description: "The sub-task/prompt to send." } },
         required: ["task"],
       },
     },
@@ -140,9 +140,9 @@ async function runTool(name, args, steps) {
         steps.push("Triggering a Netlify deploy...");
         return await netlifyDeploy();
       }
-      case "claude_delegate": {
-        steps.push("Delegating a sub-task to Claude...");
-        return await claudeDelegate(args);
+      case "ai_delegate": {
+        steps.push("Delegating a sub-task to a bigger AI model...");
+        return await aiDelegate(args);
       }
       default:
         return { error: `Unknown tool: ${name}` };
@@ -205,7 +205,7 @@ exports.handler = async (event) => {
   }
 
   const steps = [];
-  const systemPrompt = `You are MKDAI, a personal manager agent. You have real tools: fetch_url (read a web page), github_write_file / github_create_pull_request (act on the user's GitHub repo), netlify_deploy (trigger a deploy), and claude_delegate (hand a sub-task to Claude for deeper reasoning or coding). Use tools when the user's goal actually requires an action or current information you don't have. When a tool isn't configured (missing token) it will return an error — tell the user plainly which token is missing rather than pretending you did the action. Once you have everything you need, reply with a clear, concrete final answer and no further tool calls. You do not have live web search beyond fetch_url on a specific page, so don't invent current facts (like today's job listings) you can't verify.`;
+  const systemPrompt = `You are MKDAI, a personal manager agent. You have real tools: fetch_url (read a web page), github_write_file / github_create_pull_request (act on the user's GitHub repo), netlify_deploy (trigger a deploy), and ai_delegate (hand a sub-task to a bigger AI model for deeper reasoning or coding). Use tools when the user's goal actually requires an action or current information you don't have. When a tool isn't configured (missing token) it will return an error — tell the user plainly which token is missing rather than pretending you did the action. Once you have everything you need, reply with a clear, concrete final answer and no further tool calls. You do not have live web search beyond fetch_url on a specific page, so don't invent current facts (like today's job listings) you can't verify.`;
 
   const userContent = fileText
     ? `${goal}\n\nAttached file content:\n${fileText.slice(0, 12000)}`

@@ -7,7 +7,8 @@
 const GITHUB_TOKEN = process.env.GITHUB_TOKEN;
 const GITHUB_REPO = process.env.GITHUB_REPO; // "owner/repo"
 const NETLIFY_BUILD_HOOK_URL = process.env.NETLIFY_BUILD_HOOK_URL;
-const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY;
+const GROQ_API_KEY = process.env.GROQ_API_KEY;
+const GROQ_DELEGATE_MODEL = process.env.GROQ_DELEGATE_MODEL || "llama-3.3-70b-versatile";
 
 function b64(str) {
   return Buffer.from(str, "utf-8").toString("base64");
@@ -82,30 +83,30 @@ async function netlifyDeploy() {
   return { triggered: true };
 }
 
-// Delegate a sub-task to Claude for deeper reasoning/coding help.
-async function claudeDelegate({ task }) {
-  if (!ANTHROPIC_API_KEY) {
-    throw new Error("ANTHROPIC_API_KEY is not set in Netlify environment variables.");
+// Delegate a sub-task to a bigger Groq model for deeper reasoning/coding help.
+// Reuses the same free GROQ_API_KEY as the main agent — no separate key needed.
+async function aiDelegate({ task }) {
+  if (!GROQ_API_KEY) {
+    throw new Error("GROQ_API_KEY is not set in Netlify environment variables.");
   }
-  const res = await fetch("https://api.anthropic.com/v1/messages", {
+  const res = await fetch("https://api.groq.com/openai/v1/chat/completions", {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      "x-api-key": ANTHROPIC_API_KEY,
-      "anthropic-version": "2023-06-01",
+      Authorization: `Bearer ${GROQ_API_KEY}`,
     },
     body: JSON.stringify({
-      model: "claude-sonnet-5",
+      model: GROQ_DELEGATE_MODEL,
       max_tokens: 2000,
       messages: [{ role: "user", content: task }],
     }),
   });
   const data = await res.json();
   if (!res.ok) {
-    throw new Error(`Claude API error (${res.status}): ${JSON.stringify(data).slice(0, 400)}`);
+    throw new Error(`Groq delegate API error (${res.status}): ${JSON.stringify(data).slice(0, 400)}`);
   }
-  const text = (data.content || []).map((b) => b.text || "").join("\n");
+  const text = (data.choices && data.choices[0] && data.choices[0].message && data.choices[0].message.content) || "";
   return { result: text };
 }
 
-module.exports = { githubWriteFile, githubCreatePullRequest, netlifyDeploy, claudeDelegate };
+module.exports = { githubWriteFile, githubCreatePullRequest, netlifyDeploy, aiDelegate };
