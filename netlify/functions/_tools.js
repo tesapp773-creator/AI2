@@ -17,11 +17,12 @@ function b64(str) {
   return Buffer.from(str, "utf-8").toString("base64");
 }
 
-async function ghFetch(path, options = {}) {
-  if (!GITHUB_TOKEN || !GITHUB_REPO) {
-    throw new Error("GITHUB_TOKEN and/or GITHUB_REPO is not set in Netlify environment variables.");
+async function ghFetch(path, options = {}, repoOverride) {
+  const repo = repoOverride || GITHUB_REPO;
+  if (!GITHUB_TOKEN || !repo) {
+    throw new Error("GITHUB_TOKEN and/or a repo (either GITHUB_REPO default, or a repo you name) is not set.");
   }
-  const res = await fetch(`https://api.github.com/repos/${GITHUB_REPO}${path}`, {
+  const res = await fetch(`https://api.github.com/repos/${repo}${path}`, {
     ...options,
     headers: {
       Authorization: `Bearer ${GITHUB_TOKEN}`,
@@ -32,16 +33,36 @@ async function ghFetch(path, options = {}) {
   });
   const data = await res.json().catch(() => ({}));
   if (!res.ok) {
-    throw new Error(`GitHub API error (${res.status}): ${JSON.stringify(data).slice(0, 400)}`);
+    throw new Error(`GitHub API error (${res.status}) on ${repo}: ${JSON.stringify(data).slice(0, 400)}`);
   }
   return data;
 }
 
+// List the user's repos, so the agent can match a name the user gave loosely
+// (e.g. "my redbull repo") to the real repo name/spelling.
+async function githubListRepos() {
+  if (!GITHUB_TOKEN) {
+    throw new Error("GITHUB_TOKEN is not set in Netlify environment variables.");
+  }
+  const res = await fetch("https://api.github.com/user/repos?per_page=100&sort=updated", {
+    headers: {
+      Authorization: `Bearer ${GITHUB_TOKEN}`,
+      Accept: "application/vnd.github+json",
+    },
+  });
+  const data = await res.json().catch(() => ([]));
+  if (!res.ok) {
+    throw new Error(`GitHub API error (${res.status}): ${JSON.stringify(data).slice(0, 400)}`);
+  }
+  return { repos: (data || []).map((r) => r.full_name) };
+}
+
 // Create or update a single file directly on a branch (default: main).
-async function githubWriteFile({ path, content, message, branch = "main" }) {
+// `repo` is optional — "owner/repo"; falls back to GITHUB_REPO if omitted.
+async function githubWriteFile({ path, content, message, branch = "main", repo }) {
   let sha;
   try {
-    const existing = await ghFetch(`/contents/${encodeURIComponent(path)}?ref=${branch}`);
+    const existing = await ghFetch(`/contents/${encodeURIComponent(path)}?ref=${branch}`, {}, repo);
     sha = existing.sha;
   } catch {
     // File doesn't exist yet — that's fine, we're creating it.
@@ -51,27 +72,27 @@ async function githubWriteFile({ path, content, message, branch = "main" }) {
   const result = await ghFetch(`/contents/${encodeURIComponent(path)}`, {
     method: "PUT",
     body: JSON.stringify(body),
-  });
-  return { path, commitUrl: result.commit && result.commit.html_url };
+  }, repo);
+  return { path, repo: repo || GITHUB_REPO, commitUrl: result.commit && result.commit.html_url };
 }
 
 // Create a new branch off `base`, write one or more files to it, open a PR.
-async function githubCreatePullRequest({ title, body, files, base = "main", branch }) {
+async function githubCreatePullRequest({ title, body, files, base = "main", branch, repo }) {
   const branchName = branch || `mkdai-${Date.now()}`;
-  const baseRef = await ghFetch(`/git/ref/heads/${base}`);
+  const baseRef = await ghFetch(`/git/ref/heads/${base}`, {}, repo);
   const baseSha = baseRef.object.sha;
   await ghFetch(`/git/refs`, {
     method: "POST",
     body: JSON.stringify({ ref: `refs/heads/${branchName}`, sha: baseSha }),
-  });
+  }, repo);
   for (const f of files) {
-    await githubWriteFile({ path: f.path, content: f.content, message: title, branch: branchName });
+    await githubWriteFile({ path: f.path, content: f.content, message: title, branch: branchName, repo });
   }
   const pr = await ghFetch(`/pulls`, {
     method: "POST",
     body: JSON.stringify({ title, body: body || "", head: branchName, base }),
-  });
-  return { prUrl: pr.html_url, branch: branchName };
+  }, repo);
+  return { prUrl: pr.html_url, branch: branchName, repo: repo || GITHUB_REPO };
 }
 
 // Trigger a Netlify deploy via a build hook (a secret URL from Netlify, not a token).
@@ -169,4 +190,33 @@ async function sendNotificationEmail({ goal, status, answer, error }) {
   }
 }
 
-module.exports = { githubWriteFile, githubCreatePullRequest, netlifyDeploy, aiDelegate, searchWeb, sendNotificationEmail };
+// Persistent cross-task memory, stored in Supabase (table: mkdai_memory).
+// recallMemory is called automatically before every task; saveMemory is a
+// tool the agent can call when the user tells it something worth keeping.
+async function recallMemory(supabase, limit = 30) {
+  const { data, error } = await supabase
+    .from("mkdai_memory")
+    .select("fact")
+    .order("created_at", { ascending: false })
+    .limit(limit);
+  if (error || !data) return [];
+  return data.map((row) => row.fact);
+}
+
+async function saveMemory(supabase, { fact }) {
+  const { error } = await supabase.from("mkdai_memory").insert({ fact });
+  if (error) throw new Error(`Could not save memory: ${error.message}`);
+  return { saved: true };
+}
+
+module.exports = {
+  githubWriteFile,
+  githubCreatePullRequest,
+  githubListRepos,
+  netlifyDeploy,
+  aiDelegate,
+  searchWeb,
+  sendNotificationEmail,
+  recallMemory,
+  saveMemory,
+};

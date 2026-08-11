@@ -1,24 +1,39 @@
-// netlify/functions/agent.js
+// netlify/functions/agent-background.js
 //
-// MKDAI manager function.
+// MKDAI manager function (runs as a Netlify Background Function — keeps
+// working even if the user closes the tab).
 // Receives a goal, then runs a manager loop: Groq (the "brain") decides
-// which worker tool(s) to call — write/PR to GitHub, trigger a Netlify
-// deploy, delegate a sub-task to a bigger AI model, search the live web, or
-// fetch a specific web page — executes them, feeds results back, and
-// repeats until it has a final answer.
+// which worker tool(s) to call — write/PR to any GitHub repo the token can
+// access, trigger a Netlify deploy, delegate a sub-task to a bigger AI
+// model, search the live web, fetch a specific web page, or remember a
+// fact for future tasks — executes them, feeds results back, and repeats
+// until it has a final answer. Emails the user (via Resend) when done.
 //
 // Env vars (Netlify > Site configuration > Environment variables):
 //   GROQ_API_KEY            - required, powers the manager's reasoning AND the delegate worker
 //   GROQ_MODEL              - optional, defaults to "openai/gpt-oss-120b"
 //   GROQ_DELEGATE_MODEL     - optional, defaults to "llama-3.3-70b-versatile"
-//   SUPABASE_URL / SUPABASE_ANON_KEY - required, task history
-//   GITHUB_TOKEN            - optional, enables the GitHub worker
-//   GITHUB_REPO             - optional, "owner/repo" the GitHub worker acts on
+//   SUPABASE_URL / SUPABASE_ANON_KEY - required, task history + memory
+//   GITHUB_TOKEN            - optional, enables the GitHub worker. For multi-repo
+//                             support, generate it with "All repositories" access.
+//   GITHUB_REPO             - optional, default "owner/repo" used when the user
+//                             doesn't name a specific repo
 //   NETLIFY_BUILD_HOOK_URL  - optional, enables the Netlify deploy worker
 //   TAVILY_API_KEY          - optional, enables live web search
+//   RESEND_API_KEY / NOTIFY_EMAIL - optional, enables email notifications
 
 const { getClient } = require("./_supabase");
-const { githubWriteFile, githubCreatePullRequest, netlifyDeploy, aiDelegate, searchWeb, sendNotificationEmail } = require("./_tools");
+const {
+  githubWriteFile,
+  githubCreatePullRequest,
+  githubListRepos,
+  netlifyDeploy,
+  aiDelegate,
+  searchWeb,
+  sendNotificationEmail,
+  recallMemory,
+  saveMemory,
+} = require("./_tools");
 
 const MODEL = process.env.GROQ_MODEL || "openai/gpt-oss-120b";
 const API_KEY = process.env.GROQ_API_KEY;
@@ -52,14 +67,23 @@ const TOOLS = [
   {
     type: "function",
     function: {
+      name: "github_list_repos",
+      description: "List the user's GitHub repos (name + owner). Use this first if the user names a repo loosely or you're not sure of its exact name/spelling.",
+      parameters: { type: "object", properties: {} },
+    },
+  },
+  {
+    type: "function",
+    function: {
       name: "github_write_file",
-      description: "Create or update a single file directly on the main branch of the configured GitHub repo.",
+      description: "Create or update a single file directly on the main branch of a GitHub repo. Works on ANY repo the user's token can access, not just one fixed repo — always pass 'repo' as \"owner/repo\" if the user names a repo (use github_list_repos first if unsure of the exact name).",
       parameters: {
         type: "object",
         properties: {
           path: { type: "string", description: "File path in the repo, e.g. src/index.js" },
           content: { type: "string", description: "Full new file content." },
           message: { type: "string", description: "Commit message." },
+          repo: { type: "string", description: "\"owner/repo\" to act on. Omit only if the user didn't name a specific repo." },
         },
         required: ["path", "content", "message"],
       },
@@ -69,12 +93,13 @@ const TOOLS = [
     type: "function",
     function: {
       name: "github_create_pull_request",
-      description: "Create a new branch with one or more file changes and open a pull request. Use this instead of github_write_file when the change should be reviewed before merging.",
+      description: "Create a new branch with one or more file changes and open a pull request, on any repo the token can access. Use this instead of github_write_file when the change should be reviewed before merging.",
       parameters: {
         type: "object",
         properties: {
           title: { type: "string" },
           body: { type: "string" },
+          repo: { type: "string", description: "\"owner/repo\" to act on. Omit only if the user didn't name a specific repo." },
           files: {
             type: "array",
             items: {
@@ -108,6 +133,18 @@ const TOOLS = [
       },
     },
   },
+  {
+    type: "function",
+    function: {
+      name: "save_memory",
+      description: "Save a fact worth remembering for future tasks (e.g. a preference, a recurring detail, an answer the user gave to your question). Use this whenever the user tells you something durable that would help later tasks.",
+      parameters: {
+        type: "object",
+        properties: { fact: { type: "string", description: "The fact to remember, written plainly." } },
+        required: ["fact"],
+      },
+    },
+  },
 ];
 
 async function fetchPageText(url) {
@@ -135,7 +172,7 @@ async function fetchPageText(url) {
   }
 }
 
-async function runTool(name, args, steps) {
+async function runTool(name, args, steps, supabase) {
   try {
     switch (name) {
       case "search_web": {
@@ -146,12 +183,16 @@ async function runTool(name, args, steps) {
         steps.push(`Fetching ${args.url} ...`);
         return await fetchPageText(args.url);
       }
+      case "github_list_repos": {
+        steps.push("Listing your GitHub repos...");
+        return await githubListRepos();
+      }
       case "github_write_file": {
-        steps.push(`Writing ${args.path} to GitHub...`);
+        steps.push(`Writing ${args.path} to ${args.repo || "the default repo"}...`);
         return await githubWriteFile(args);
       }
       case "github_create_pull_request": {
-        steps.push(`Opening a pull request: ${args.title}`);
+        steps.push(`Opening a pull request on ${args.repo || "the default repo"}: ${args.title}`);
         return await githubCreatePullRequest(args);
       }
       case "netlify_deploy": {
@@ -161,6 +202,10 @@ async function runTool(name, args, steps) {
       case "ai_delegate": {
         steps.push("Delegating a sub-task to a bigger AI model...");
         return await aiDelegate(args);
+      }
+      case "save_memory": {
+        steps.push("Remembering that for next time...");
+        return await saveMemory(supabase, args);
       }
       default:
         return { error: `Unknown tool: ${name}` };
@@ -223,7 +268,11 @@ exports.handler = async (event) => {
   }
 
   const steps = [];
-  const systemPrompt = `You are MKDAI, a personal manager agent. You have real tools: search_web (search the live web for current info), fetch_url (read a specific web page), github_write_file / github_create_pull_request (act on the user's GitHub repo), netlify_deploy (trigger a deploy), and ai_delegate (hand a sub-task to a bigger AI model for deeper reasoning or coding). Use tools when the user's goal actually requires an action or current information you don't have — prefer search_web for anything current (news, listings, facts) rather than guessing from memory. When a tool isn't configured (missing token) it will return an error — tell the user plainly which token is missing rather than pretending you did the action. Once you have everything you need, reply with a clear, concrete final answer and no further tool calls.`;
+  const memoryFacts = await recallMemory(supabase);
+  const memorySection = memoryFacts.length
+    ? `\n\nThings you already know about the user from past tasks (use these, don't ask again if already answered here):\n- ${memoryFacts.join("\n- ")}`
+    : "";
+  const systemPrompt = `You are MKDAI, a personal manager agent. You have real tools: search_web (search the live web for current info), fetch_url (read a specific web page), github_list_repos (list the user's repos), github_write_file / github_create_pull_request (act on ANY of the user's GitHub repos — pass 'repo' as "owner/repo" when the user names one, using github_list_repos first if you're not sure of the exact spelling), netlify_deploy (trigger a deploy), ai_delegate (hand a sub-task to a bigger AI model for deeper reasoning or coding), and save_memory (remember a durable fact for future tasks — use it whenever the user tells you a preference, a recurring detail, or answers a question you asked). Use tools when the user's goal actually requires an action or current information you don't have — prefer search_web for anything current (news, listings, facts) rather than guessing from memory. When a tool isn't configured (missing token) it will return an error — tell the user plainly which token is missing rather than pretending you did the action. Once you have everything you need, reply with a clear, concrete final answer and no further tool calls.${memorySection}`;
 
   const userContent = fileText
     ? `${goal}\n\nAttached file content:\n${fileText.slice(0, 12000)}`
@@ -252,7 +301,7 @@ exports.handler = async (event) => {
         } catch {
           // leave args empty if the model produced malformed JSON
         }
-        const result = await runTool(call.function.name, args, steps);
+        const result = await runTool(call.function.name, args, steps, supabase);
         messages.push({
           role: "tool",
           tool_call_id: call.id,
