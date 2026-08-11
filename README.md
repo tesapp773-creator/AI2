@@ -6,11 +6,12 @@ write to GitHub, open a pull request, trigger a Netlify deploy, or delegate
 a hard sub-task to a second, bigger AI model — then reports back with a
 clear answer, and emails you when it's done.
 
-## What this v4 does
+## What this v5 does
 - **Real manager agent**: Groq (the "brain") decides which tool(s) a goal actually needs and calls them — not just Q&A.
+- **Recurring/scheduled tasks**: say "every day", "every hour", or "every week" in a goal and it keeps running automatically — via a Netlify Scheduled Function — even if you never open the app. It can also list or cancel what's scheduled.
 - **Live web search**: search_web (Tavily, free tier) for current facts, news, listings — no more guessing from memory.
 - **GitHub worker, any repo**: create/update files or open pull requests on ANY repo your token can access — not locked to one. Name a repo in your goal and it'll match it (or list your repos to check spelling). Can also create brand-new repos (requires a classic token — see below).
-- **Cross-task memory**: it remembers facts you've told it — preferences, recurring details, answers to questions it asked — across separate tasks and days, not just within one job.
+- **Cross-task memory**: it remembers facts you've told it — preferences, recurring details, answers to questions it asked — across separate tasks and days, not just within one job. It can also forget or list what it remembers.
 - **Netlify deploy worker**: trigger a new deploy on command.
 - **AI delegate worker**: hand a complex reasoning/coding sub-task to a bigger Groq model (free, same key as the main agent) and fold its answer back in.
 - **Read a specific page**: paste a URL in your goal and it fetches that page.

@@ -261,6 +261,44 @@ async function listAllMemory(supabase) {
   return { facts: (data || []).map((row) => row.fact) };
 }
 
+// Recurring tasks, stored in Supabase (table: mkdai_scheduled_tasks).
+// A Netlify Scheduled Function checks this table hourly and runs whatever
+// is due, so these keep running even if the app is never opened.
+async function scheduleTask(supabase, { goal, frequency }) {
+  const freq = ["hourly", "daily", "weekly"].includes(frequency) ? frequency : "daily";
+  const { data, error } = await supabase
+    .from("mkdai_scheduled_tasks")
+    .insert({ goal, frequency: freq })
+    .select("id")
+    .single();
+  if (error) throw new Error(`Could not schedule task: ${error.message}`);
+  return { scheduled: true, id: data.id, goal, frequency: freq };
+}
+
+async function listScheduledTasks(supabase) {
+  const { data, error } = await supabase
+    .from("mkdai_scheduled_tasks")
+    .select("id, goal, frequency, active, last_run_at")
+    .order("created_at", { ascending: false });
+  if (error) throw new Error(`Could not list scheduled tasks: ${error.message}`);
+  return { scheduledTasks: data || [] };
+}
+
+// Deactivate (not delete) scheduled tasks whose goal matches a phrase.
+async function cancelScheduledTask(supabase, { query }) {
+  const { data: matches, error: findError } = await supabase
+    .from("mkdai_scheduled_tasks")
+    .select("id, goal")
+    .eq("active", true)
+    .ilike("goal", `%${query}%`);
+  if (findError) throw new Error(`Could not search scheduled tasks: ${findError.message}`);
+  if (!matches || matches.length === 0) return { cancelled: [] };
+  const ids = matches.map((m) => m.id);
+  const { error: updateError } = await supabase.from("mkdai_scheduled_tasks").update({ active: false }).in("id", ids);
+  if (updateError) throw new Error(`Could not cancel scheduled task: ${updateError.message}`);
+  return { cancelled: matches.map((m) => m.goal) };
+}
+
 module.exports = {
   githubWriteFile,
   githubCreatePullRequest,
@@ -274,4 +312,7 @@ module.exports = {
   saveMemory,
   forgetMemory,
   listAllMemory,
+  scheduleTask,
+  listScheduledTasks,
+  cancelScheduledTask,
 };
