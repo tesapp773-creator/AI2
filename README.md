@@ -9,7 +9,7 @@ clear answer, and emails you when it's done.
 ## What this v4 does
 - **Real manager agent**: Groq (the "brain") decides which tool(s) a goal actually needs and calls them — not just Q&A.
 - **Live web search**: search_web (Tavily, free tier) for current facts, news, listings — no more guessing from memory.
-- **GitHub worker, any repo**: create/update files or open pull requests on ANY repo your token can access — not locked to one. Name a repo in your goal and it'll match it (or list your repos to check spelling).
+- **GitHub worker, any repo**: create/update files or open pull requests on ANY repo your token can access — not locked to one. Name a repo in your goal and it'll match it (or list your repos to check spelling). Can also create brand-new repos (requires a classic token — see below).
 - **Cross-task memory**: it remembers facts you've told it — preferences, recurring details, answers to questions it asked — across separate tasks and days, not just within one job.
 - **Netlify deploy worker**: trigger a new deploy on command.
 - **AI delegate worker**: hand a complex reasoning/coding sub-task to a bigger Groq model (free, same key as the main agent) and fold its answer back in.
@@ -51,7 +51,7 @@ Site configuration → Environment variables → add whichever of these you want
 | `SUPABASE_ANON_KEY` | Yes | Supabase dashboard → project → Settings → API → `anon` `public` key |
 | `GROQ_MODEL` | No | overrides the default `openai/gpt-oss-120b` |
 | `GROQ_DELEGATE_MODEL` | No | overrides the default `llama-3.3-70b-versatile` used by the AI delegate worker |
-| `GITHUB_TOKEN` | No (enables GitHub worker) | your fine-grained PAT — set "Repository access" to **All repositories** so it can work on any repo, not just one |
+| `GITHUB_TOKEN` | No (enables GitHub worker) | **classic token** with `repo` scope (github.com → Settings → Developer settings → Personal access tokens → Tokens (classic)) — needed for repo creation; a fine-grained token also works for everything except creating new repos |
 | `GITHUB_REPO` | No | `owner/repo` used as the default repo when you don't name one, e.g. `tesapp773-creator/AI2` |
 | `NETLIFY_BUILD_HOOK_URL` | No (enables deploy worker) | from step 1 |
 | `TAVILY_API_KEY` | No (enables web search) | from step 1 |

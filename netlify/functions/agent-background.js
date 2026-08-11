@@ -27,6 +27,7 @@ const {
   githubWriteFile,
   githubCreatePullRequest,
   githubListRepos,
+  githubCreateRepo,
   netlifyDeploy,
   aiDelegate,
   searchWeb,
@@ -70,6 +71,22 @@ const TOOLS = [
       name: "github_list_repos",
       description: "List the user's GitHub repos (name + owner). Use this first if the user names a repo loosely or you're not sure of its exact name/spelling.",
       parameters: { type: "object", properties: {} },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "github_create_repo",
+      description: "Create a brand-new GitHub repository under the user's account.",
+      parameters: {
+        type: "object",
+        properties: {
+          name: { type: "string", description: "Repo name, e.g. \"my-new-project\"." },
+          description: { type: "string" },
+          isPrivate: { type: "boolean", description: "true for a private repo, false (default) for public." },
+        },
+        required: ["name"],
+      },
     },
   },
   {
@@ -187,6 +204,10 @@ async function runTool(name, args, steps, supabase) {
         steps.push("Listing your GitHub repos...");
         return await githubListRepos();
       }
+      case "github_create_repo": {
+        steps.push(`Creating a new GitHub repo: ${args.name}...`);
+        return await githubCreateRepo(args);
+      }
       case "github_write_file": {
         steps.push(`Writing ${args.path} to ${args.repo || "the default repo"}...`);
         return await githubWriteFile(args);
@@ -272,7 +293,7 @@ exports.handler = async (event) => {
   const memorySection = memoryFacts.length
     ? `\n\nThings you already know about the user from past tasks (use these, don't ask again if already answered here):\n- ${memoryFacts.join("\n- ")}`
     : "";
-  const systemPrompt = `You are MKDAI, a personal manager agent. You have real tools: search_web (search the live web for current info), fetch_url (read a specific web page), github_list_repos (list the user's repos), github_write_file / github_create_pull_request (act on ANY of the user's GitHub repos — pass 'repo' as "owner/repo" when the user names one, using github_list_repos first if you're not sure of the exact spelling), netlify_deploy (trigger a deploy), ai_delegate (hand a sub-task to a bigger AI model for deeper reasoning or coding), and save_memory (remember a durable fact for future tasks — use it whenever the user tells you a preference, a recurring detail, or answers a question you asked). Use tools when the user's goal actually requires an action or current information you don't have — prefer search_web for anything current (news, listings, facts) rather than guessing from memory. When a tool isn't configured (missing token) it will return an error — tell the user plainly which token is missing rather than pretending you did the action. Once you have everything you need, reply with a clear, concrete final answer and no further tool calls.${memorySection}`;
+  const systemPrompt = `You are MKDAI, a personal manager agent. You have real tools: search_web (search the live web for current info), fetch_url (read a specific web page), github_list_repos (list the user's repos), github_create_repo (create a brand-new repo), github_write_file / github_create_pull_request (act on ANY of the user's GitHub repos — pass 'repo' as "owner/repo" when the user names one, using github_list_repos first if you're not sure of the exact spelling), netlify_deploy (trigger a deploy), ai_delegate (hand a sub-task to a bigger AI model for deeper reasoning or coding), and save_memory (remember a durable fact for future tasks — use it whenever the user tells you a preference, a recurring detail, or answers a question you asked). Use tools when the user's goal actually requires an action or current information you don't have — prefer search_web for anything current (news, listings, facts) rather than guessing from memory. When a tool isn't configured (missing token) it will return an error — tell the user plainly which token is missing rather than pretending you did the action. Once you have everything you need, reply with a clear, concrete final answer and no further tool calls.${memorySection}`;
 
   const userContent = fileText
     ? `${goal}\n\nAttached file content:\n${fileText.slice(0, 12000)}`

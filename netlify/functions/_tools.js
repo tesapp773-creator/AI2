@@ -57,6 +57,31 @@ async function githubListRepos() {
   return { repos: (data || []).map((r) => r.full_name) };
 }
 
+// Create a brand-new repo. Requires a classic PAT with "repo" scope —
+// fine-grained tokens can't create repos (a GitHub API limitation).
+async function githubCreateRepo({ name, description, isPrivate = false }) {
+  if (!GITHUB_TOKEN) {
+    throw new Error("GITHUB_TOKEN is not set in Netlify environment variables.");
+  }
+  const res = await fetch("https://api.github.com/user/repos", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${GITHUB_TOKEN}`,
+      Accept: "application/vnd.github+json",
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ name, description: description || "", private: isPrivate }),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    const hint = res.status === 403 || res.status === 404
+      ? " (this usually means GITHUB_TOKEN is a fine-grained token — creating repos needs a classic token with 'repo' scope)"
+      : "";
+    throw new Error(`GitHub API error (${res.status}) creating repo: ${JSON.stringify(data).slice(0, 300)}${hint}`);
+  }
+  return { repo: data.full_name, url: data.html_url };
+}
+
 // Create or update a single file directly on a branch (default: main).
 // `repo` is optional — "owner/repo"; falls back to GITHUB_REPO if omitted.
 async function githubWriteFile({ path, content, message, branch = "main", repo }) {
@@ -213,6 +238,7 @@ module.exports = {
   githubWriteFile,
   githubCreatePullRequest,
   githubListRepos,
+  githubCreateRepo,
   netlifyDeploy,
   aiDelegate,
   searchWeb,
