@@ -3,8 +3,9 @@
 // MKDAI manager function.
 // Receives a goal, then runs a manager loop: Groq (the "brain") decides
 // which worker tool(s) to call — write/PR to GitHub, trigger a Netlify
-// deploy, delegate a sub-task to a bigger AI model, or fetch a web page —
-// executes them, feeds results back, and repeats until it has a final answer.
+// deploy, delegate a sub-task to a bigger AI model, search the live web, or
+// fetch a specific web page — executes them, feeds results back, and
+// repeats until it has a final answer.
 //
 // Env vars (Netlify > Site configuration > Environment variables):
 //   GROQ_API_KEY            - required, powers the manager's reasoning AND the delegate worker
@@ -14,15 +15,28 @@
 //   GITHUB_TOKEN            - optional, enables the GitHub worker
 //   GITHUB_REPO             - optional, "owner/repo" the GitHub worker acts on
 //   NETLIFY_BUILD_HOOK_URL  - optional, enables the Netlify deploy worker
+//   TAVILY_API_KEY          - optional, enables live web search
 
 const { getClient } = require("./_supabase");
-const { githubWriteFile, githubCreatePullRequest, netlifyDeploy, aiDelegate } = require("./_tools");
+const { githubWriteFile, githubCreatePullRequest, netlifyDeploy, aiDelegate, searchWeb, sendNotificationEmail } = require("./_tools");
 
 const MODEL = process.env.GROQ_MODEL || "openai/gpt-oss-120b";
 const API_KEY = process.env.GROQ_API_KEY;
 const MAX_TURNS = 6;
 
 const TOOLS = [
+  {
+    type: "function",
+    function: {
+      name: "search_web",
+      description: "Search the live web for current information (news, facts, listings, anything you don't already know). Returns top results with titles, URLs, and snippets.",
+      parameters: {
+        type: "object",
+        properties: { query: { type: "string", description: "The search query." } },
+        required: ["query"],
+      },
+    },
+  },
   {
     type: "function",
     function: {
@@ -124,6 +138,10 @@ async function fetchPageText(url) {
 async function runTool(name, args, steps) {
   try {
     switch (name) {
+      case "search_web": {
+        steps.push(`Searching the web for "${args.query}"...`);
+        return await searchWeb(args);
+      }
       case "fetch_url": {
         steps.push(`Fetching ${args.url} ...`);
         return await fetchPageText(args.url);
@@ -205,7 +223,7 @@ exports.handler = async (event) => {
   }
 
   const steps = [];
-  const systemPrompt = `You are MKDAI, a personal manager agent. You have real tools: fetch_url (read a web page), github_write_file / github_create_pull_request (act on the user's GitHub repo), netlify_deploy (trigger a deploy), and ai_delegate (hand a sub-task to a bigger AI model for deeper reasoning or coding). Use tools when the user's goal actually requires an action or current information you don't have. When a tool isn't configured (missing token) it will return an error — tell the user plainly which token is missing rather than pretending you did the action. Once you have everything you need, reply with a clear, concrete final answer and no further tool calls. You do not have live web search beyond fetch_url on a specific page, so don't invent current facts (like today's job listings) you can't verify.`;
+  const systemPrompt = `You are MKDAI, a personal manager agent. You have real tools: search_web (search the live web for current info), fetch_url (read a specific web page), github_write_file / github_create_pull_request (act on the user's GitHub repo), netlify_deploy (trigger a deploy), and ai_delegate (hand a sub-task to a bigger AI model for deeper reasoning or coding). Use tools when the user's goal actually requires an action or current information you don't have — prefer search_web for anything current (news, listings, facts) rather than guessing from memory. When a tool isn't configured (missing token) it will return an error — tell the user plainly which token is missing rather than pretending you did the action. Once you have everything you need, reply with a clear, concrete final answer and no further tool calls.`;
 
   const userContent = fileText
     ? `${goal}\n\nAttached file content:\n${fileText.slice(0, 12000)}`
@@ -252,6 +270,7 @@ exports.handler = async (event) => {
       .from("mkdai_tasks")
       .update({ status: "done", answer: finalAnswer, sources: [], steps, updated_at: new Date().toISOString() })
       .eq("id", taskId);
+    await sendNotificationEmail({ goal, status: "done", answer: finalAnswer });
 
     return { statusCode: 200, body: JSON.stringify({ id: taskId, answer: finalAnswer, sources: [], steps }) };
   } catch (err) {
@@ -259,6 +278,7 @@ exports.handler = async (event) => {
       .from("mkdai_tasks")
       .update({ status: "error", error: err.message, steps, updated_at: new Date().toISOString() })
       .eq("id", taskId);
+    await sendNotificationEmail({ goal, status: "error", error: err.message });
     return { statusCode: 500, body: JSON.stringify({ id: taskId, error: err.message, steps }) };
   }
 };

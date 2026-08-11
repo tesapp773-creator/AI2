@@ -96,19 +96,26 @@ async function runTask() {
 
   runBtn.disabled = true;
   statusEl.classList.remove("hidden");
-  setSteps(["Starting..."]);
+  setSteps(["Starting... (this now runs in the background — you can even close this tab, and you'll get an email when it's done if notifications are set up)"]);
 
   try {
-    const res = await fetch("/api/agent", {
+    await fetch("/api/agent", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ goal, fileText: attachedFileText }),
     });
-    const data = await res.json();
-    if (data.steps) setSteps(data.steps);
-    // The function already wrote the result (or error) to Supabase — just re-render from there.
+    // Background function returns instantly and keeps working server-side.
+    // Poll for a while so the UI updates once it's actually done.
+    await renderResults();
+    for (let i = 0; i < 40; i++) {
+      await new Promise((r) => setTimeout(r, 3000));
+      const results = await fetchResults();
+      const stillRunning = results.some((r) => r.goal === goal && (r.status === "running" || r.status === "pending"));
+      await renderResults();
+      if (!stillRunning) break;
+    }
   } catch {
-    // Network-level failure before the function could even respond; nothing was saved.
+    // Network-level failure before the request could even be sent.
   } finally {
     statusEl.classList.add("hidden");
     runBtn.disabled = false;

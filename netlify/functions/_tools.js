@@ -9,6 +9,9 @@ const GITHUB_REPO = process.env.GITHUB_REPO; // "owner/repo"
 const NETLIFY_BUILD_HOOK_URL = process.env.NETLIFY_BUILD_HOOK_URL;
 const GROQ_API_KEY = process.env.GROQ_API_KEY;
 const GROQ_DELEGATE_MODEL = process.env.GROQ_DELEGATE_MODEL || "llama-3.3-70b-versatile";
+const TAVILY_API_KEY = process.env.TAVILY_API_KEY;
+const RESEND_API_KEY = process.env.RESEND_API_KEY;
+const NOTIFY_EMAIL = process.env.NOTIFY_EMAIL;
 
 function b64(str) {
   return Buffer.from(str, "utf-8").toString("base64");
@@ -109,4 +112,61 @@ async function aiDelegate({ task }) {
   return { result: text };
 }
 
-module.exports = { githubWriteFile, githubCreatePullRequest, netlifyDeploy, aiDelegate };
+// Live web search via Tavily (free tier, no card required).
+async function searchWeb({ query }) {
+  if (!TAVILY_API_KEY) {
+    throw new Error("TAVILY_API_KEY is not set in Netlify environment variables.");
+  }
+  const res = await fetch("https://api.tavily.com/search", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      api_key: TAVILY_API_KEY,
+      query,
+      max_results: 5,
+      include_answer: true,
+    }),
+  });
+  const data = await res.json();
+  if (!res.ok) {
+    throw new Error(`Tavily search error (${res.status}): ${JSON.stringify(data).slice(0, 400)}`);
+  }
+  const results = (data.results || []).map((r) => ({
+    title: r.title,
+    url: r.url,
+    snippet: (r.content || "").slice(0, 500),
+  }));
+  return { answer: data.answer || null, results };
+}
+
+// Email the user when a background task finishes (success or error).
+// Silently does nothing if RESEND_API_KEY / NOTIFY_EMAIL aren't set — this
+// is a nice-to-have, not required for the task itself to work.
+async function sendNotificationEmail({ goal, status, answer, error }) {
+  if (!RESEND_API_KEY || !NOTIFY_EMAIL) return { skipped: true };
+  const subject = status === "error" ? `MKDAI task failed: ${goal.slice(0, 60)}` : `MKDAI task done: ${goal.slice(0, 60)}`;
+  const body = status === "error"
+    ? `Your MKDAI task failed.\n\nGoal: ${goal}\n\nError: ${error}`
+    : `Your MKDAI task finished.\n\nGoal: ${goal}\n\nAnswer:\n${answer}`;
+  try {
+    await fetch("https://api.resend.com/emails", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${RESEND_API_KEY}`,
+      },
+      body: JSON.stringify({
+        from: "MKDAI <onboarding@resend.dev>",
+        to: [NOTIFY_EMAIL],
+        subject,
+        text: body,
+      }),
+    });
+    return { sent: true };
+  } catch (err) {
+    // Never let a notification failure break the task itself.
+    return { sent: false, error: err.message };
+  }
+}
+
+module.exports = { githubWriteFile, githubCreatePullRequest, netlifyDeploy, aiDelegate, searchWeb, sendNotificationEmail };
