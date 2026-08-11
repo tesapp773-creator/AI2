@@ -234,6 +234,33 @@ async function saveMemory(supabase, { fact }) {
   return { saved: true };
 }
 
+// Delete remembered facts that match a substring (case-insensitive).
+// Returns what was deleted so the agent can confirm back to the user.
+async function forgetMemory(supabase, { query }) {
+  const { data: matches, error: findError } = await supabase
+    .from("mkdai_memory")
+    .select("id, fact")
+    .ilike("fact", `%${query}%`);
+  if (findError) throw new Error(`Could not search memory: ${findError.message}`);
+  if (!matches || matches.length === 0) return { deleted: [] };
+  const ids = matches.map((m) => m.id);
+  const { error: deleteError } = await supabase.from("mkdai_memory").delete().in("id", ids);
+  if (deleteError) throw new Error(`Could not delete memory: ${deleteError.message}`);
+  return { deleted: matches.map((m) => m.fact) };
+}
+
+// List everything remembered (not just the most recent 30 used in the
+// system prompt) — for when the user asks "what do you remember about me?"
+async function listAllMemory(supabase) {
+  const { data, error } = await supabase
+    .from("mkdai_memory")
+    .select("fact")
+    .order("created_at", { ascending: false })
+    .limit(200);
+  if (error) throw new Error(`Could not list memory: ${error.message}`);
+  return { facts: (data || []).map((row) => row.fact) };
+}
+
 module.exports = {
   githubWriteFile,
   githubCreatePullRequest,
@@ -245,4 +272,6 @@ module.exports = {
   sendNotificationEmail,
   recallMemory,
   saveMemory,
+  forgetMemory,
+  listAllMemory,
 };

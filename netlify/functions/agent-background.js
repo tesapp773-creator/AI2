@@ -34,6 +34,8 @@ const {
   sendNotificationEmail,
   recallMemory,
   saveMemory,
+  forgetMemory,
+  listAllMemory,
 } = require("./_tools");
 
 const MODEL = process.env.GROQ_MODEL || "openai/gpt-oss-120b";
@@ -162,6 +164,26 @@ const TOOLS = [
       },
     },
   },
+  {
+    type: "function",
+    function: {
+      name: "forget_memory",
+      description: "Delete a previously remembered fact (or facts) that match a word or phrase. Use this when the user says to forget, correct, or update something you remember.",
+      parameters: {
+        type: "object",
+        properties: { query: { type: "string", description: "A word or phrase to match against remembered facts, e.g. \"favorite color\"." } },
+        required: ["query"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "list_memory",
+      description: "List everything currently remembered about the user. Use this when the user asks what you remember, or to check for outdated/duplicate facts.",
+      parameters: { type: "object", properties: {} },
+    },
+  },
 ];
 
 async function fetchPageText(url) {
@@ -228,6 +250,14 @@ async function runTool(name, args, steps, supabase) {
         steps.push("Remembering that for next time...");
         return await saveMemory(supabase, args);
       }
+      case "forget_memory": {
+        steps.push(`Forgetting anything matching "${args.query}"...`);
+        return await forgetMemory(supabase, args);
+      }
+      case "list_memory": {
+        steps.push("Listing everything remembered...");
+        return await listAllMemory(supabase);
+      }
       default:
         return { error: `Unknown tool: ${name}` };
     }
@@ -293,7 +323,7 @@ exports.handler = async (event) => {
   const memorySection = memoryFacts.length
     ? `\n\nThings you already know about the user from past tasks (use these, don't ask again if already answered here):\n- ${memoryFacts.join("\n- ")}`
     : "";
-  const systemPrompt = `You are MKDAI, a personal manager agent. You have real tools: search_web (search the live web for current info), fetch_url (read a specific web page), github_list_repos (list the user's repos), github_create_repo (create a brand-new repo), github_write_file / github_create_pull_request (act on ANY of the user's GitHub repos — pass 'repo' as "owner/repo" when the user names one, using github_list_repos first if you're not sure of the exact spelling), netlify_deploy (trigger a deploy), ai_delegate (hand a sub-task to a bigger AI model for deeper reasoning or coding), and save_memory (remember a durable fact for future tasks — use it whenever the user tells you a preference, a recurring detail, or answers a question you asked). Use tools when the user's goal actually requires an action or current information you don't have — prefer search_web for anything current (news, listings, facts) rather than guessing from memory. When a tool isn't configured (missing token) it will return an error — tell the user plainly which token is missing rather than pretending you did the action. Once you have everything you need, reply with a clear, concrete final answer and no further tool calls.${memorySection}`;
+  const systemPrompt = `You are MKDAI, a personal manager agent. You have real tools: search_web (search the live web for current info), fetch_url (read a specific web page), github_list_repos (list the user's repos), github_create_repo (create a brand-new repo), github_write_file / github_create_pull_request (act on ANY of the user's GitHub repos — pass 'repo' as "owner/repo" when the user names one, using github_list_repos first if you're not sure of the exact spelling), netlify_deploy (trigger a deploy), ai_delegate (hand a sub-task to a bigger AI model for deeper reasoning or coding), and save_memory (remember a durable fact for future tasks — use it whenever the user tells you a preference, a recurring detail, or answers a question you asked), forget_memory (delete a remembered fact matching a word/phrase — use it when the user says to forget or correct something), and list_memory (show everything currently remembered, e.g. when the user asks what you remember about them). Use tools when the user's goal actually requires an action or current information you don't have — prefer search_web for anything current (news, listings, facts) rather than guessing from memory. When a tool isn't configured (missing token) it will return an error — tell the user plainly which token is missing rather than pretending you did the action. Once you have everything you need, reply with a clear, concrete final answer and no further tool calls.${memorySection}`;
 
   const userContent = fileText
     ? `${goal}\n\nAttached file content:\n${fileText.slice(0, 12000)}`
