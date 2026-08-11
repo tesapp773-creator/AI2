@@ -1,56 +1,63 @@
 # MKDAI
 
-A personal AI agent: give it a goal in plain English and it searches the web,
-reads a page you link, or summarizes a file you attach — then shows you a
-clear answer with sources.
+A personal manager agent: give it a goal in plain English and it decides
+what needs to happen — read a page, summarize a file, write to GitHub, open
+a pull request, trigger a Netlify deploy, or delegate a hard sub-task to
+Claude — then reports back with a clear answer.
 
-## What this v1 does
-- **Reasoning/summarizing**: runs on Groq (free, fast, no billing card required) to answer, research from context, and summarize.
-- **Read a specific page**: paste a URL in your goal ("summarize https://...") and it fetches that page first, then summarizes/answers using its actual content.
-- **Summarize a file**: attach a .txt/.md/.csv/.json/.log file and ask it to summarize or extract from it.
-- **Persistent results (real database)**: every task is stored in a Supabase Postgres table (`mkdai_tasks`), so results show up on any device you open the app from — not just the browser you ran it in.
+## What this v2 does
+- **Real manager agent**: Groq (the "brain") decides which tool(s) a goal actually needs and calls them — not just Q&A.
+- **GitHub worker**: create/update files directly on `main`, or open a pull request with one or more file changes.
+- **Netlify deploy worker**: trigger a new deploy on command.
+- **Claude delegate worker**: hand a complex reasoning/coding sub-task to Claude and fold its answer back in.
+- **Read a specific page**: paste a URL in your goal and it fetches that page.
+- **Summarize a file**: attach a .txt/.md/.csv/.json/.log file.
+- **Persistent results**: every task (and which tools it used) is stored in Supabase, visible from any device.
 
-## What v1 does *not* do yet
-- **Live web search**: Groq's free models don't have built-in search grounding like Gemini does, so open-ended "search the web for X" goals rely on the model's own training knowledge, not live results — it will say so when it's unsure. Adding real search (e.g. via Tavily's free tier, built for exactly this) is a clean next step.
-- **True background jobs + notifications**: Netlify's free functions run for a bounded time per request, so tasks run while the page is open. The database is already in place for this, though — adding a queue + email/push notification step later is a natural next step, not a rebuild.
+Each worker only activates if its token is configured — if you skip one, MKDAI will tell you plainly which token is missing rather than pretending it did the action.
 
-## 1. Get a Groq API key
-Go to https://console.groq.com/keys and create a key. No credit card required, free tier included.
+## What v2 does *not* do yet
+- **Live web search**: still relies on fetching a specific URL you give it, not open-ended search — Groq's free models don't include search grounding.
+- **True background jobs + notifications**: tasks still run while the page is open; a queue + notification step is a future upgrade.
+
+## 1. Get your API keys / tokens
+- **Groq** (required): https://console.groq.com/keys — no card needed.
+- **GitHub** (optional, GitHub worker): a fine-grained personal access token scoped to the target repo, with **Contents: Read and write** and **Pull requests: Read and write** permissions. github.com → Settings → Developer settings → Fine-grained tokens.
+- **Netlify build hook** (optional, deploy worker): your Netlify site → Site configuration → Build & deploy → Build hooks → Add build hook. Copy the URL (different from a personal access token).
+- **Anthropic/Claude** (optional, Claude delegate worker): https://console.anthropic.com → API Keys.
 
 ## 2. Supabase (already set up)
 This project uses a Supabase project that's already live, with the `mkdai_tasks` table created:
 - Project URL: `https://flipqcruvtujomcunhet.supabase.co`
-- Table: `mkdai_tasks` (goal, status, answer, sources, steps, error, timestamps)
-- You'll add the URL + anon key as environment variables in Netlify (step 3) — no setup needed on your end.
+- You'll add the URL + anon key as environment variables in Netlify (step 4).
 
 ## 3. Push this to GitHub
-From this folder:
 ```bash
 git add -A
-git commit -m "Initial commit: MKDAI v1"
-```
-Then create a new empty repo on GitHub (github.com/new — don't add a README there), and:
-```bash
-git remote add origin https://github.com/YOUR_USERNAME/YOUR_REPO.git
-git branch -M main
-git push -u origin main
+git commit -m "Update MKDAI"
+git push
 ```
 
 ## 4. Deploy on Netlify
-1. Netlify dashboard → "Add new site" → "Import an existing project" → pick this repo.
-2. Build settings: leave as detected (publish directory `public`, functions directory `netlify/functions`) — already set in `netlify.toml`.
-3. Site configuration → Environment variables → add:
-   - `GROQ_API_KEY` = your key from step 1
-   - `SUPABASE_URL` = `https://flipqcruvtujomcunhet.supabase.co`
-   - `SUPABASE_ANON_KEY` = the anon/publishable key (see below)
-   - (optional) `GROQ_MODEL` = a specific Groq model name, if you want to override the default (`openai/gpt-oss-120b`)
-4. Deploy.
+Site configuration → Environment variables → add whichever of these you want active:
 
-To get the Supabase anon key: Supabase dashboard → your project → Settings → API → copy the `anon` `public` key.
+| Key | Required? | Value |
+|---|---|---|
+| `GROQ_API_KEY` | Yes | from step 1 |
+| `SUPABASE_URL` | Yes | `https://flipqcruvtujomcunhet.supabase.co` |
+| `SUPABASE_ANON_KEY` | Yes | Supabase dashboard → project → Settings → API → `anon` `public` key |
+| `GROQ_MODEL` | No | overrides the default `openai/gpt-oss-120b` |
+| `GITHUB_TOKEN` | No (enables GitHub worker) | your fine-grained PAT |
+| `GITHUB_REPO` | No (needed with token) | `owner/repo`, e.g. `tesapp773-creator/AI2` |
+| `NETLIFY_BUILD_HOOK_URL` | No (enables deploy worker) | from step 1 |
+| `ANTHROPIC_API_KEY` | No (enables Claude worker) | from step 1 |
+
+Then Deploys tab → Trigger deploy → Deploy site.
 
 ## 5. Use it
-Open your Netlify site URL, type a goal, hit Run.
+Open your Netlify site URL, type a goal, hit Run. Try something concrete like:
+"Create a file called notes.md in the repo with today's date and commit it" to see the GitHub worker in action.
 
 ## Extending it later
-- Add more "workers" by adding logic to `netlify/functions/agent.js` (e.g. a dedicated jobs-search worker that queries a jobs API).
-- For true background jobs + notifications: add a small database (Netlify Blobs or a free Supabase project) to store task state, and an email step (e.g. Resend's free tier) to notify when a long task finishes.
+- Add more workers by adding a new function + tool entry in `netlify/functions/_tools.js` and `netlify/functions/agent.js`.
+- For true background jobs + notifications: add a queue and an email step (e.g. Resend's free tier).
