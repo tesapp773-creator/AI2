@@ -244,10 +244,10 @@ async function aiDelegate({ task, provider = "groq" }) {
       throw new Error("GEMINI_API_KEY is not set in Netlify environment variables (needed to delegate to Gemini).");
     }
     const res = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${GEMINI_API_KEY}`,
+      `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent`,
       {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", "x-goog-api-key": GEMINI_API_KEY },
         body: JSON.stringify({ contents: [{ parts: [{ text: task }] }] }),
       }
     );
