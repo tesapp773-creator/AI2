@@ -15,7 +15,7 @@ clear answer, and emails you when it's done.
 - **Netlify project creation**: create a brand-new Netlify site, optionally linked to a new GitHub repo for auto-deploy — e.g. "create a new repo and Netlify site called my-landing-page."
 - **Cross-task memory**: it remembers facts you've told it — preferences, recurring details, answers to questions it asked — across separate tasks and days, not just within one job. It can also forget or list what it remembers.
 - **Netlify deploy worker**: trigger a new deploy on command for the main site.
-- **AI delegate worker**: hand a complex reasoning/coding sub-task to a bigger Groq model (free, same key as the main agent) and fold its answer back in.
+- **AI delegate worker**: hand a complex reasoning/coding sub-task to another free AI model and fold its answer back in. Defaults to a bigger Groq model (no extra setup); ask it to use Gemini by name to route there instead (needs a free Gemini key — see below).
 - **Read a specific page**: paste a URL in your goal and it fetches that page.
 - **Summarize a file**: attach a .txt/.md/.csv/.json/.log file.
 - **True background jobs**: tasks run as a Netlify Background Function — you can close the tab and it keeps working.
@@ -29,7 +29,7 @@ Each worker only activates if its token is configured — if you skip one, MKDAI
 - **GitHub** (optional, GitHub worker): a **classic token** with `repo` scope, or a fine-grained token with "All repositories" access + Contents/Pull requests read-write (fine-grained can't create new repos).
 - **Netlify build hook** (optional, deploy worker for the main site): your Netlify site → Site configuration → Build & deploy → Build hooks → Add build hook.
 - **Netlify personal access token** (optional, for creating brand-new sites): Netlify → User settings → Applications → New access token.
-- **AI delegate worker**: no extra key needed — it reuses your `GROQ_API_KEY` from above, just calls a bigger free model.
+- **AI delegate worker**: no extra key needed for Groq — it reuses your `GROQ_API_KEY` from above. For Gemini as a second option, get a free key at https://aistudio.google.com/apikey (no card needed).
 - **Tavily** (optional, web search): https://tavily.com — free tier, no card.
 - **Resend** (optional, email notifications + sending): https://resend.com — free tier, no card. Note: the default sender (`onboarding@resend.dev`) can only send to the email address you signed up to Resend with, unless you verify your own domain — so "send an email to someone else" may fail on the free tier until you verify a domain.
 - **Gmail App Password** (optional, reading your inbox): requires 2-Step Verification enabled on your Google account. Go to https://myaccount.google.com/apppasswords, create one for "Mail", copy the 16-character password.
@@ -65,6 +65,8 @@ Site configuration → Environment variables → add whichever of these you want
 | `NOTIFY_EMAIL` | No (needed with Resend key) | the email address to notify |
 | `EMAIL_IMAP_USER` | No (enables reading your inbox) | your Gmail address |
 | `EMAIL_IMAP_APP_PASSWORD` | No (needed with IMAP user) | the 16-character Gmail App Password from step 1 |
+| `GEMINI_API_KEY` | No (enables delegating to Gemini) | from step 1 |
+| `GEMINI_MODEL` | No | overrides the default `gemini-2.5-flash` |
 
 Then Deploys tab → Trigger deploy → Deploy site.
 

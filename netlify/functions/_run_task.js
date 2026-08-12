@@ -176,10 +176,13 @@ const TOOLS = [
     type: "function",
     function: {
       name: "ai_delegate",
-      description: "Delegate a complex reasoning, writing, or coding sub-task to a bigger AI model and get back its answer.",
+      description: "Delegate a complex reasoning, writing, or coding sub-task to another free AI model and get back its answer.",
       parameters: {
         type: "object",
-        properties: { task: { type: "string", description: "The sub-task/prompt to send." } },
+        properties: {
+          task: { type: "string", description: "The sub-task/prompt to send." },
+          provider: { type: "string", enum: ["groq", "gemini"], description: "Which AI to delegate to. \"groq\" (default) uses a bigger Groq model. \"gemini\" uses Google Gemini's free tier — use this if the user specifically asks for Gemini or \"another AI\"." },
+        },
         required: ["task"],
       },
     },
@@ -322,7 +325,7 @@ async function runTool(name, args, steps, supabase) {
         return await sendEmail(args);
       }
       case "ai_delegate": {
-        steps.push("Delegating a sub-task to a bigger AI model...");
+        steps.push(`Delegating a sub-task to ${args.provider || "groq"}...`);
         return await aiDelegate(args);
       }
       case "save_memory": {
@@ -389,7 +392,7 @@ async function runTask(supabase, { goal, fileText }) {
   const memorySection = memoryFacts.length
     ? `\n\nThings you already know about the user from past tasks (use these, don't ask again if already answered here):\n- ${memoryFacts.join("\n- ")}`
     : "";
-  const systemPrompt = `You are MKDAI, a personal manager agent. You have real tools: search_web (search the live web for current info), fetch_url (read a specific web page), github_list_repos (list the user's repos), github_create_repo (create a brand-new repo), github_write_file / github_create_pull_request (act on ANY of the user's GitHub repos — pass 'repo' as "owner/repo" when the user names one, using github_list_repos first if you're not sure of the exact spelling), netlify_deploy (trigger a deploy), netlify_create_site (create a brand-new Netlify site, optionally linked to a GitHub repo for auto-deploy), check_email (read/search the user's inbox), send_email (send an email on the user's behalf), ai_delegate (hand a sub-task to a bigger AI model for deeper reasoning or coding), save_memory / forget_memory / list_memory (manage durable facts about the user across tasks), and schedule_task / list_scheduled_tasks / cancel_scheduled_task (set up, view, or stop goals that run automatically on a recurring schedule — hourly, daily, or weekly — without the user asking again). Use tools when the user's goal actually requires an action or current information you don't have — prefer search_web for anything current (news, listings, facts) rather than guessing from memory. When a tool isn't configured (missing token) it will return an error — tell the user plainly which token is missing rather than pretending you did the action. Once you have everything you need, reply with a clear, concrete final answer and no further tool calls.${memorySection}`;
+  const systemPrompt = `You are MKDAI, a personal manager agent. You have real tools: search_web (search the live web for current info), fetch_url (read a specific web page), github_list_repos (list the user's repos), github_create_repo (create a brand-new repo), github_write_file / github_create_pull_request (act on ANY of the user's GitHub repos — pass 'repo' as "owner/repo" when the user names one, using github_list_repos first if you're not sure of the exact spelling), netlify_deploy (trigger a deploy), netlify_create_site (create a brand-new Netlify site, optionally linked to a GitHub repo for auto-deploy), check_email (read/search the user's inbox), send_email (send an email on the user's behalf), ai_delegate (hand a sub-task to another free AI model for deeper reasoning or coding — Groq by default, or Gemini if the user asks for it by name), save_memory / forget_memory / list_memory (manage durable facts about the user across tasks), and schedule_task / list_scheduled_tasks / cancel_scheduled_task (set up, view, or stop goals that run automatically on a recurring schedule — hourly, daily, or weekly — without the user asking again). Use tools when the user's goal actually requires an action or current information you don't have — prefer search_web for anything current (news, listings, facts) rather than guessing from memory. When a tool isn't configured (missing token) it will return an error — tell the user plainly which token is missing rather than pretending you did the action. Once you have everything you need, reply with a clear, concrete final answer and no further tool calls.${memorySection}`;
 
   const userContent = fileText
     ? `${goal}\n\nAttached file content:\n${fileText.slice(0, 12000)}`

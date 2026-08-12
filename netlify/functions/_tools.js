@@ -15,6 +15,8 @@ const NOTIFY_EMAIL = process.env.NOTIFY_EMAIL;
 const NETLIFY_API_TOKEN = process.env.NETLIFY_API_TOKEN;
 const EMAIL_IMAP_USER = process.env.EMAIL_IMAP_USER;
 const EMAIL_IMAP_APP_PASSWORD = process.env.EMAIL_IMAP_APP_PASSWORD;
+const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
+const GEMINI_MODEL = process.env.GEMINI_MODEL || "gemini-2.5-flash";
 
 function b64(str) {
   return Buffer.from(str, "utf-8").toString("base64");
@@ -233,9 +235,32 @@ async function sendEmail({ to, subject, body }) {
   return { sent: true, to, subject };
 }
 
-// Delegate a sub-task to a bigger Groq model for deeper reasoning/coding help.
-// Reuses the same free GROQ_API_KEY as the main agent — no separate key needed.
-async function aiDelegate({ task }) {
+// Delegate a sub-task to another free AI model for deeper reasoning/coding
+// help. provider: "groq" (default, reuses GROQ_API_KEY, no extra setup) or
+// "gemini" (Google's free tier, needs GEMINI_API_KEY).
+async function aiDelegate({ task, provider = "groq" }) {
+  if (provider === "gemini") {
+    if (!GEMINI_API_KEY) {
+      throw new Error("GEMINI_API_KEY is not set in Netlify environment variables (needed to delegate to Gemini).");
+    }
+    const res = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${GEMINI_API_KEY}`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ contents: [{ parts: [{ text: task }] }] }),
+      }
+    );
+    const data = await res.json();
+    if (!res.ok) {
+      throw new Error(`Gemini delegate API error (${res.status}): ${JSON.stringify(data).slice(0, 400)}`);
+    }
+    const text = (data.candidates && data.candidates[0] && data.candidates[0].content && data.candidates[0].content.parts
+      && data.candidates[0].content.parts.map((p) => p.text).join("")) || "";
+    return { result: text, provider: "gemini" };
+  }
+
+  // Default: Groq (free, same key as the main agent).
   if (!GROQ_API_KEY) {
     throw new Error("GROQ_API_KEY is not set in Netlify environment variables.");
   }
@@ -256,7 +281,7 @@ async function aiDelegate({ task }) {
     throw new Error(`Groq delegate API error (${res.status}): ${JSON.stringify(data).slice(0, 400)}`);
   }
   const text = (data.choices && data.choices[0] && data.choices[0].message && data.choices[0].message.content) || "";
-  return { result: text };
+  return { result: text, provider: "groq" };
 }
 
 // Live web search via Tavily (free tier, no card required).
