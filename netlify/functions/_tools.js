@@ -12,6 +12,9 @@ const GROQ_DELEGATE_MODEL = process.env.GROQ_DELEGATE_MODEL || "llama-3.3-70b-ve
 const TAVILY_API_KEY = process.env.TAVILY_API_KEY;
 const RESEND_API_KEY = process.env.RESEND_API_KEY;
 const NOTIFY_EMAIL = process.env.NOTIFY_EMAIL;
+const NETLIFY_API_TOKEN = process.env.NETLIFY_API_TOKEN;
+const EMAIL_IMAP_USER = process.env.EMAIL_IMAP_USER;
+const EMAIL_IMAP_APP_PASSWORD = process.env.EMAIL_IMAP_APP_PASSWORD;
 
 function b64(str) {
   return Buffer.from(str, "utf-8").toString("base64");
@@ -70,7 +73,7 @@ async function githubCreateRepo({ name, description, isPrivate = false }) {
       Accept: "application/vnd.github+json",
       "Content-Type": "application/json",
     },
-    body: JSON.stringify({ name, description: description || "", private: isPrivate }),
+    body: JSON.stringify({ name, description: description || "", private: isPrivate, auto_init: true }),
   });
   const data = await res.json().catch(() => ({}));
   if (!res.ok) {
@@ -130,6 +133,104 @@ async function netlifyDeploy() {
     throw new Error(`Netlify build hook failed (${res.status})`);
   }
   return { triggered: true };
+}
+
+// Create a brand-new Netlify site, optionally linked to a GitHub repo so it
+// auto-deploys on push. Requires a Netlify personal access token (different
+// from the build hook URL used by netlifyDeploy).
+async function netlifyCreateSite({ name, repo, branch = "main" }) {
+  if (!NETLIFY_API_TOKEN) {
+    throw new Error("NETLIFY_API_TOKEN is not set in Netlify environment variables.");
+  }
+  const body = {};
+  if (name) body.name = name;
+  if (repo) {
+    body.repo = { provider: "github", repo, branch };
+  }
+  const res = await fetch("https://api.netlify.com/api/v1/sites", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${NETLIFY_API_TOKEN}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(body),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    throw new Error(`Netlify API error (${res.status}) creating site: ${JSON.stringify(data).slice(0, 400)}`);
+  }
+  return { siteUrl: data.ssl_url || data.url, adminUrl: data.admin_url, name: data.name };
+}
+
+// Read/search recent inbox messages via IMAP (works with a Gmail App
+// Password — requires 2-Step Verification enabled on the Google account).
+async function checkEmail({ query, limit = 10 }) {
+  if (!EMAIL_IMAP_USER || !EMAIL_IMAP_APP_PASSWORD) {
+    throw new Error("EMAIL_IMAP_USER and/or EMAIL_IMAP_APP_PASSWORD is not set in Netlify environment variables.");
+  }
+  const { ImapFlow } = require("imapflow");
+  const client = new ImapFlow({
+    host: "imap.gmail.com",
+    port: 993,
+    secure: true,
+    auth: { user: EMAIL_IMAP_USER, pass: EMAIL_IMAP_APP_PASSWORD },
+    logger: false,
+  });
+  const messages = [];
+  try {
+    await client.connect();
+    const lock = await client.getMailboxLock("INBOX");
+    try {
+      const status = await client.status("INBOX", { messages: true });
+      const total = status.messages || 0;
+      if (total > 0) {
+        const start = Math.max(1, total - limit + 1);
+        for await (const msg of client.fetch(`${start}:${total}`, { envelope: true, bodyStructure: true })) {
+          const subject = (msg.envelope && msg.envelope.subject) || "(no subject)";
+          const from = msg.envelope && msg.envelope.from && msg.envelope.from[0]
+            ? `${msg.envelope.from[0].name || ""} <${msg.envelope.from[0].address}>`
+            : "(unknown sender)";
+          const date = msg.envelope && msg.envelope.date;
+          if (!query || subject.toLowerCase().includes(query.toLowerCase()) || from.toLowerCase().includes(query.toLowerCase())) {
+            messages.push({ subject, from, date });
+          }
+        }
+      }
+    } finally {
+      lock.release();
+    }
+  } finally {
+    await client.logout().catch(() => {});
+  }
+  return { messages: messages.reverse() };
+}
+
+// Send an email on the user's behalf via Resend. Note: Resend's free tier
+// default sender (onboarding@resend.dev) can only deliver to the address
+// the Resend account itself was signed up with, unless a custom domain is
+// verified — this will error clearly if that limit is hit.
+async function sendEmail({ to, subject, body }) {
+  if (!RESEND_API_KEY) {
+    throw new Error("RESEND_API_KEY is not set in Netlify environment variables.");
+  }
+  const res = await fetch("https://api.resend.com/emails", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${RESEND_API_KEY}`,
+    },
+    body: JSON.stringify({
+      from: "MKDAI <onboarding@resend.dev>",
+      to: [to],
+      subject,
+      text: body,
+    }),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    throw new Error(`Resend API error (${res.status}): ${JSON.stringify(data).slice(0, 400)} — note: the free Resend sender can usually only email the address the Resend account was signed up with, unless a custom domain is verified.`);
+  }
+  return { sent: true, to, subject };
 }
 
 // Delegate a sub-task to a bigger Groq model for deeper reasoning/coding help.
@@ -305,6 +406,9 @@ module.exports = {
   githubListRepos,
   githubCreateRepo,
   netlifyDeploy,
+  netlifyCreateSite,
+  checkEmail,
+  sendEmail,
   aiDelegate,
   searchWeb,
   sendNotificationEmail,

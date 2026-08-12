@@ -11,9 +11,12 @@ const {
   githubListRepos,
   githubCreateRepo,
   netlifyDeploy,
+  netlifyCreateSite,
   aiDelegate,
   searchWeb,
   sendNotificationEmail,
+  checkEmail,
+  sendEmail,
   recallMemory,
   saveMemory,
   forgetMemory,
@@ -123,6 +126,50 @@ const TOOLS = [
       name: "netlify_deploy",
       description: "Trigger a new Netlify deploy for the configured site.",
       parameters: { type: "object", properties: {} },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "netlify_create_site",
+      description: "Create a brand-new Netlify site/project. If the user wants it connected to a GitHub repo (usually a new one, created first with github_create_repo), pass 'repo' as \"owner/repo\" so it auto-deploys on push.",
+      parameters: {
+        type: "object",
+        properties: {
+          name: { type: "string", description: "Optional custom site name/subdomain." },
+          repo: { type: "string", description: "\"owner/repo\" to link for auto-deploy. Omit for an empty, unlinked site." },
+        },
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "check_email",
+      description: "Read/search the user's recent inbox messages (subject, sender, date).",
+      parameters: {
+        type: "object",
+        properties: {
+          query: { type: "string", description: "Optional keyword to filter by subject or sender." },
+          limit: { type: "number", description: "How many recent messages to check, default 10." },
+        },
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "send_email",
+      description: "Send an email on the user's behalf to a given recipient.",
+      parameters: {
+        type: "object",
+        properties: {
+          to: { type: "string", description: "Recipient email address." },
+          subject: { type: "string" },
+          body: { type: "string" },
+        },
+        required: ["to", "subject", "body"],
+      },
     },
   },
   {
@@ -262,6 +309,18 @@ async function runTool(name, args, steps, supabase) {
         steps.push("Triggering a Netlify deploy...");
         return await netlifyDeploy();
       }
+      case "netlify_create_site": {
+        steps.push(`Creating a new Netlify site${args.repo ? ` linked to ${args.repo}` : ""}...`);
+        return await netlifyCreateSite(args);
+      }
+      case "check_email": {
+        steps.push("Checking your inbox...");
+        return await checkEmail(args);
+      }
+      case "send_email": {
+        steps.push(`Sending an email to ${args.to}...`);
+        return await sendEmail(args);
+      }
       case "ai_delegate": {
         steps.push("Delegating a sub-task to a bigger AI model...");
         return await aiDelegate(args);
@@ -330,7 +389,7 @@ async function runTask(supabase, { goal, fileText }) {
   const memorySection = memoryFacts.length
     ? `\n\nThings you already know about the user from past tasks (use these, don't ask again if already answered here):\n- ${memoryFacts.join("\n- ")}`
     : "";
-  const systemPrompt = `You are MKDAI, a personal manager agent. You have real tools: search_web (search the live web for current info), fetch_url (read a specific web page), github_list_repos (list the user's repos), github_create_repo (create a brand-new repo), github_write_file / github_create_pull_request (act on ANY of the user's GitHub repos — pass 'repo' as "owner/repo" when the user names one, using github_list_repos first if you're not sure of the exact spelling), netlify_deploy (trigger a deploy), ai_delegate (hand a sub-task to a bigger AI model for deeper reasoning or coding), save_memory / forget_memory / list_memory (manage durable facts about the user across tasks), and schedule_task / list_scheduled_tasks / cancel_scheduled_task (set up, view, or stop goals that run automatically on a recurring schedule — hourly, daily, or weekly — without the user asking again). Use tools when the user's goal actually requires an action or current information you don't have — prefer search_web for anything current (news, listings, facts) rather than guessing from memory. When a tool isn't configured (missing token) it will return an error — tell the user plainly which token is missing rather than pretending you did the action. Once you have everything you need, reply with a clear, concrete final answer and no further tool calls.${memorySection}`;
+  const systemPrompt = `You are MKDAI, a personal manager agent. You have real tools: search_web (search the live web for current info), fetch_url (read a specific web page), github_list_repos (list the user's repos), github_create_repo (create a brand-new repo), github_write_file / github_create_pull_request (act on ANY of the user's GitHub repos — pass 'repo' as "owner/repo" when the user names one, using github_list_repos first if you're not sure of the exact spelling), netlify_deploy (trigger a deploy), netlify_create_site (create a brand-new Netlify site, optionally linked to a GitHub repo for auto-deploy), check_email (read/search the user's inbox), send_email (send an email on the user's behalf), ai_delegate (hand a sub-task to a bigger AI model for deeper reasoning or coding), save_memory / forget_memory / list_memory (manage durable facts about the user across tasks), and schedule_task / list_scheduled_tasks / cancel_scheduled_task (set up, view, or stop goals that run automatically on a recurring schedule — hourly, daily, or weekly — without the user asking again). Use tools when the user's goal actually requires an action or current information you don't have — prefer search_web for anything current (news, listings, facts) rather than guessing from memory. When a tool isn't configured (missing token) it will return an error — tell the user plainly which token is missing rather than pretending you did the action. Once you have everything you need, reply with a clear, concrete final answer and no further tool calls.${memorySection}`;
 
   const userContent = fileText
     ? `${goal}\n\nAttached file content:\n${fileText.slice(0, 12000)}`

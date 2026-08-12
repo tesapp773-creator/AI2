@@ -6,13 +6,15 @@ write to GitHub, open a pull request, trigger a Netlify deploy, or delegate
 a hard sub-task to a second, bigger AI model — then reports back with a
 clear answer, and emails you when it's done.
 
-## What this v5 does
+## What this v6 does
 - **Real manager agent**: Groq (the "brain") decides which tool(s) a goal actually needs and calls them — not just Q&A.
 - **Recurring/scheduled tasks**: say "every day", "every hour", or "every week" in a goal and it keeps running automatically — via a Netlify Scheduled Function — even if you never open the app. It can also list or cancel what's scheduled.
+- **Email access**: reads/searches your inbox (via IMAP + a Gmail App Password), and can send emails on your behalf (via Resend).
 - **Live web search**: search_web (Tavily, free tier) for current facts, news, listings — no more guessing from memory.
 - **GitHub worker, any repo**: create/update files or open pull requests on ANY repo your token can access — not locked to one. Name a repo in your goal and it'll match it (or list your repos to check spelling). Can also create brand-new repos (requires a classic token — see below).
+- **Netlify project creation**: create a brand-new Netlify site, optionally linked to a new GitHub repo for auto-deploy — e.g. "create a new repo and Netlify site called my-landing-page."
 - **Cross-task memory**: it remembers facts you've told it — preferences, recurring details, answers to questions it asked — across separate tasks and days, not just within one job. It can also forget or list what it remembers.
-- **Netlify deploy worker**: trigger a new deploy on command.
+- **Netlify deploy worker**: trigger a new deploy on command for the main site.
 - **AI delegate worker**: hand a complex reasoning/coding sub-task to a bigger Groq model (free, same key as the main agent) and fold its answer back in.
 - **Read a specific page**: paste a URL in your goal and it fetches that page.
 - **Summarize a file**: attach a .txt/.md/.csv/.json/.log file.
@@ -24,14 +26,16 @@ Each worker only activates if its token is configured — if you skip one, MKDAI
 
 ## 1. Get your API keys / tokens
 - **Groq** (required): https://console.groq.com/keys — no card needed.
-- **GitHub** (optional, GitHub worker): a fine-grained personal access token scoped to the target repo, with **Contents: Read and write** and **Pull requests: Read and write** permissions. github.com → Settings → Developer settings → Fine-grained tokens.
-- **Netlify build hook** (optional, deploy worker): your Netlify site → Site configuration → Build & deploy → Build hooks → Add build hook. Copy the URL (different from a personal access token).
+- **GitHub** (optional, GitHub worker): a **classic token** with `repo` scope, or a fine-grained token with "All repositories" access + Contents/Pull requests read-write (fine-grained can't create new repos).
+- **Netlify build hook** (optional, deploy worker for the main site): your Netlify site → Site configuration → Build & deploy → Build hooks → Add build hook.
+- **Netlify personal access token** (optional, for creating brand-new sites): Netlify → User settings → Applications → New access token.
 - **AI delegate worker**: no extra key needed — it reuses your `GROQ_API_KEY` from above, just calls a bigger free model.
 - **Tavily** (optional, web search): https://tavily.com — free tier, no card.
-- **Resend** (optional, email notifications): https://resend.com — free tier, no card. Note: the default sender (`onboarding@resend.dev`) can only send to the email address you signed up to Resend with, unless you verify your own domain.
+- **Resend** (optional, email notifications + sending): https://resend.com — free tier, no card. Note: the default sender (`onboarding@resend.dev`) can only send to the email address you signed up to Resend with, unless you verify your own domain — so "send an email to someone else" may fail on the free tier until you verify a domain.
+- **Gmail App Password** (optional, reading your inbox): requires 2-Step Verification enabled on your Google account. Go to https://myaccount.google.com/apppasswords, create one for "Mail", copy the 16-character password.
 
 ## 2. Supabase (already set up)
-This project uses a Supabase project that's already live, with the `mkdai_tasks` table created:
+This project uses a Supabase project that's already live, with the `mkdai_tasks`, `mkdai_memory`, and `mkdai_scheduled_tasks` tables created:
 - Project URL: `https://flipqcruvtujomcunhet.supabase.co`
 - You'll add the URL + anon key as environment variables in Netlify (step 4).
 
@@ -52,12 +56,15 @@ Site configuration → Environment variables → add whichever of these you want
 | `SUPABASE_ANON_KEY` | Yes | Supabase dashboard → project → Settings → API → `anon` `public` key |
 | `GROQ_MODEL` | No | overrides the default `openai/gpt-oss-120b` |
 | `GROQ_DELEGATE_MODEL` | No | overrides the default `llama-3.3-70b-versatile` used by the AI delegate worker |
-| `GITHUB_TOKEN` | No (enables GitHub worker) | **classic token** with `repo` scope (github.com → Settings → Developer settings → Personal access tokens → Tokens (classic)) — needed for repo creation; a fine-grained token also works for everything except creating new repos |
+| `GITHUB_TOKEN` | No (enables GitHub worker) | **classic token** with `repo` scope — needed for repo creation; a fine-grained token also works for everything except creating new repos |
 | `GITHUB_REPO` | No | `owner/repo` used as the default repo when you don't name one, e.g. `tesapp773-creator/AI2` |
-| `NETLIFY_BUILD_HOOK_URL` | No (enables deploy worker) | from step 1 |
+| `NETLIFY_BUILD_HOOK_URL` | No (enables deploy worker for the main site) | from step 1 |
+| `NETLIFY_API_TOKEN` | No (enables creating brand-new Netlify sites) | from step 1 |
 | `TAVILY_API_KEY` | No (enables web search) | from step 1 |
-| `RESEND_API_KEY` | No (enables email notifications) | from step 1 |
+| `RESEND_API_KEY` | No (enables email notifications + sending) | from step 1 |
 | `NOTIFY_EMAIL` | No (needed with Resend key) | the email address to notify |
+| `EMAIL_IMAP_USER` | No (enables reading your inbox) | your Gmail address |
+| `EMAIL_IMAP_APP_PASSWORD` | No (needed with IMAP user) | the 16-character Gmail App Password from step 1 |
 
 Then Deploys tab → Trigger deploy → Deploy site.
 
