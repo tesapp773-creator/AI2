@@ -504,7 +504,15 @@ async function callGemini(messages) {
     throw new Error("GEMINI_API_KEY is not set — cannot fall back to Gemini.");
   }
   const systemMsg = messages.find((m) => m.role === "system");
-  const body = { contents: messagesToGeminiContents(messages), tools: GEMINI_TOOLS };
+  const body = {
+    contents: messagesToGeminiContents(messages),
+    tools: GEMINI_TOOLS,
+    // Disabling "thinking" avoids Gemini 3's mandatory thought_signature
+    // requirement on function calls — our translation layer doesn't (and
+    // can't cleanly) persist those signatures across a mixed Groq/Gemini
+    // history, so the simplest reliable fix is to not generate them at all.
+    generationConfig: { thinkingConfig: { thinkingBudget: 0 } },
+  };
   if (systemMsg) body.system_instruction = { parts: [{ text: systemMsg.content }] };
 
   const res = await fetch(
