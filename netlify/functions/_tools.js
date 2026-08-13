@@ -161,7 +161,102 @@ async function netlifyCreateSite({ name, repo, branch = "main" }) {
   if (!res.ok) {
     throw new Error(`Netlify API error (${res.status}) creating site: ${JSON.stringify(data).slice(0, 400)}`);
   }
-  return { siteUrl: data.ssl_url || data.url, adminUrl: data.admin_url, name: data.name };
+  return { siteId: data.site_id || data.id, siteUrl: data.ssl_url || data.url, adminUrl: data.admin_url, name: data.name };
+}
+
+// Netlify's env var API is scoped by "account" (team), not just site — this
+// looks up the token owner's account id once, needed by netlifySetEnvVars.
+async function netlifyGetAccountId() {
+  const res = await fetch("https://api.netlify.com/api/v1/accounts", {
+    headers: { Authorization: `Bearer ${NETLIFY_API_TOKEN}` },
+  });
+  const data = await res.json().catch(() => ([]));
+  if (!res.ok || !data || !data[0]) {
+    throw new Error(`Could not look up Netlify account (${res.status}): ${JSON.stringify(data).slice(0, 300)}`);
+  }
+  return data[0].id;
+}
+
+// Set one or more environment variables on a specific Netlify site. This is
+// what lets a newly-created site actually work — without this, a site MKDAI
+// creates has no keys/tokens of its own and its build/functions will fail.
+async function netlifySetEnvVars({ siteId, vars }) {
+  if (!NETLIFY_API_TOKEN) {
+    throw new Error("NETLIFY_API_TOKEN is not set in Netlify environment variables.");
+  }
+  const accountId = await netlifyGetAccountId();
+  const payload = Object.entries(vars).map(([key, value]) => ({
+    key,
+    scopes: ["builds", "functions", "runtime", "post-processing"],
+    values: [{ value: String(value), context: "all" }],
+  }));
+  const res = await fetch(`https://api.netlify.com/api/v1/accounts/${accountId}/env?site_id=${siteId}`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${NETLIFY_API_TOKEN}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(payload),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    throw new Error(`Netlify API error (${res.status}) setting env vars: ${JSON.stringify(data).slice(0, 400)}`);
+  }
+  return { set: Object.keys(vars) };
+}
+
+// Trigger a fresh build via the Netlify API (site-scoped, uses the personal
+// access token — different from the build-hook-based netlifyDeploy above).
+async function netlifyTriggerBuild({ siteId }) {
+  if (!NETLIFY_API_TOKEN) {
+    throw new Error("NETLIFY_API_TOKEN is not set in Netlify environment variables.");
+  }
+  const res = await fetch(`https://api.netlify.com/api/v1/sites/${siteId}/builds`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${NETLIFY_API_TOKEN}` },
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    throw new Error(`Netlify API error (${res.status}) triggering build: ${JSON.stringify(data).slice(0, 400)}`);
+  }
+  return { deployId: data.deploy_id };
+}
+
+// Look up the actual current state of a site's latest deploy, instead of
+// assuming a deploy succeeded just because it was triggered.
+async function netlifyCheckDeployStatus({ siteId }) {
+  if (!NETLIFY_API_TOKEN) {
+    throw new Error("NETLIFY_API_TOKEN is not set in Netlify environment variables.");
+  }
+  const res = await fetch(`https://api.netlify.com/api/v1/sites/${siteId}/deploys?per_page=1`, {
+    headers: { Authorization: `Bearer ${NETLIFY_API_TOKEN}` },
+  });
+  const data = await res.json().catch(() => ([]));
+  if (!res.ok) {
+    throw new Error(`Netlify API error (${res.status}) checking deploy status: ${JSON.stringify(data).slice(0, 400)}`);
+  }
+  const deploy = data && data[0];
+  if (!deploy) return { state: "no_deploys_yet" };
+  return {
+    state: deploy.state, // "new" | "building" | "ready" | "error" | ...
+    deployUrl: deploy.deploy_ssl_url || deploy.deploy_url,
+    errorMessage: deploy.error_message || null,
+  };
+}
+
+// Poll a site's latest deploy until it finishes (ready/error) or times out.
+// Used internally so tools can report the TRUE outcome of a deploy instead
+// of just confirming it was triggered.
+async function netlifyWaitForDeploy({ siteId, timeoutMs = 90000, intervalMs = 5000 }) {
+  const start = Date.now();
+  while (Date.now() - start < timeoutMs) {
+    const status = await netlifyCheckDeployStatus({ siteId });
+    if (status.state === "ready" || status.state === "error" || status.state === "no_deploys_yet") {
+      return status;
+    }
+    await new Promise((r) => setTimeout(r, intervalMs));
+  }
+  return { state: "timed_out" };
 }
 
 // Read/search recent inbox messages via IMAP (works with a Gmail App
@@ -432,6 +527,10 @@ module.exports = {
   githubCreateRepo,
   netlifyDeploy,
   netlifyCreateSite,
+  netlifySetEnvVars,
+  netlifyTriggerBuild,
+  netlifyCheckDeployStatus,
+  netlifyWaitForDeploy,
   checkEmail,
   sendEmail,
   aiDelegate,

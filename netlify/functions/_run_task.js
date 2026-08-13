@@ -12,6 +12,10 @@ const {
   githubCreateRepo,
   netlifyDeploy,
   netlifyCreateSite,
+  netlifySetEnvVars,
+  netlifyTriggerBuild,
+  netlifyCheckDeployStatus,
+  netlifyWaitForDeploy,
   aiDelegate,
   searchWeb,
   sendNotificationEmail,
@@ -132,13 +136,30 @@ const TOOLS = [
     type: "function",
     function: {
       name: "netlify_create_site",
-      description: "Create a brand-new Netlify site/project. If the user wants it connected to a GitHub repo (usually a new one, created first with github_create_repo), pass 'repo' as \"owner/repo\" so it auto-deploys on push.",
+      description: "Create a brand-new Netlify site/project. If linked to a repo (usually a new one, created first with github_create_repo), it auto-deploys on push. If the site needs its own secrets/tokens to actually work (e.g. it's another copy of an app needing API keys), pass 'envVars' — this sets them on the new site, triggers a fresh build, WAITS for it to finish, and reports the real result (success or the actual error) rather than assuming it worked.",
       parameters: {
         type: "object",
         properties: {
           name: { type: "string", description: "Optional custom site name/subdomain." },
           repo: { type: "string", description: "\"owner/repo\" to link for auto-deploy. Omit for an empty, unlinked site." },
+          envVars: {
+            type: "object",
+            description: "Key-value pairs of environment variables to set on the new site, e.g. {\"GROQ_API_KEY\": \"...\"}. Only include this if the user gave you values to set, or explicitly wants the site fully configured, not just created.",
+            additionalProperties: { type: "string" },
+          },
         },
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "netlify_check_deploy_status",
+      description: "Check whether a Netlify site's most recent deploy actually succeeded, is still building, or failed (with the real error if it failed). Use this instead of assuming a deploy worked.",
+      parameters: {
+        type: "object",
+        properties: { siteId: { type: "string", description: "The Netlify site ID (returned when the site was created)." } },
+        required: ["siteId"],
       },
     },
   },
@@ -314,7 +335,21 @@ async function runTool(name, args, steps, supabase) {
       }
       case "netlify_create_site": {
         steps.push(`Creating a new Netlify site${args.repo ? ` linked to ${args.repo}` : ""}...`);
-        return await netlifyCreateSite(args);
+        const site = await netlifyCreateSite(args);
+        if (args.envVars && Object.keys(args.envVars).length > 0 && site.siteId) {
+          steps.push(`Setting ${Object.keys(args.envVars).length} environment variable(s) on the new site...`);
+          await netlifySetEnvVars({ siteId: site.siteId, vars: args.envVars });
+          steps.push("Triggering a fresh build with the new environment variables...");
+          await netlifyTriggerBuild({ siteId: site.siteId });
+          steps.push("Waiting for the deploy to finish so I can confirm it actually worked...");
+          const deployResult = await netlifyWaitForDeploy({ siteId: site.siteId });
+          return { ...site, deployStatus: deployResult };
+        }
+        return site;
+      }
+      case "netlify_check_deploy_status": {
+        steps.push("Checking the real deploy status...");
+        return await netlifyCheckDeployStatus(args);
       }
       case "check_email": {
         steps.push("Checking your inbox...");
@@ -392,7 +427,7 @@ async function runTask(supabase, { goal, fileText }) {
   const memorySection = memoryFacts.length
     ? `\n\nThings you already know about the user from past tasks (use these, don't ask again if already answered here):\n- ${memoryFacts.join("\n- ")}`
     : "";
-  const systemPrompt = `You are MKDAI, a personal manager agent. You have real tools: search_web (search the live web for current info), fetch_url (read a specific web page), github_list_repos (list the user's repos), github_create_repo (create a brand-new repo), github_write_file / github_create_pull_request (act on ANY of the user's GitHub repos — pass 'repo' as "owner/repo" when the user names one, using github_list_repos first if you're not sure of the exact spelling), netlify_deploy (trigger a deploy), netlify_create_site (create a brand-new Netlify site, optionally linked to a GitHub repo for auto-deploy), check_email (read/search the user's inbox), send_email (send an email on the user's behalf), ai_delegate (hand a sub-task to another free AI model for deeper reasoning or coding — Groq by default, or Gemini if the user asks for it by name), save_memory / forget_memory / list_memory (manage durable facts about the user across tasks), and schedule_task / list_scheduled_tasks / cancel_scheduled_task (set up, view, or stop goals that run automatically on a recurring schedule — hourly, daily, or weekly — without the user asking again). Use tools when the user's goal actually requires an action or current information you don't have — prefer search_web for anything current (news, listings, facts) rather than guessing from memory. When a tool isn't configured (missing token) it will return an error — tell the user plainly which token is missing rather than pretending you did the action. Once you have everything you need, reply with a clear, concrete final answer and no further tool calls.${memorySection}`;
+  const systemPrompt = `You are MKDAI, a personal manager agent. You have real tools: search_web (search the live web for current info), fetch_url (read a specific web page), github_list_repos (list the user's repos), github_create_repo (create a brand-new repo), github_write_file / github_create_pull_request (act on ANY of the user's GitHub repos — pass 'repo' as "owner/repo" when the user names one, using github_list_repos first if you're not sure of the exact spelling), netlify_deploy (trigger a deploy for the main site), netlify_create_site (create a brand-new Netlify site, optionally linked to a GitHub repo, and optionally with its own environment variables set — when envVars are given it waits for the real deploy result instead of assuming success), netlify_check_deploy_status (check whether a site's latest deploy actually succeeded, is building, or failed, with the real error if it failed), check_email (read/search the user's inbox), send_email (send an email on the user's behalf), ai_delegate (hand a sub-task to another free AI model for deeper reasoning or coding — Groq by default, or Gemini if the user asks for it by name), save_memory / forget_memory / list_memory (manage durable facts about the user across tasks), and schedule_task / list_scheduled_tasks / cancel_scheduled_task (set up, view, or stop goals that run automatically on a recurring schedule — hourly, daily, or weekly — without the user asking again). Use tools when the user's goal actually requires an action or current information you don't have — prefer search_web for anything current (news, listings, facts) rather than guessing from memory. When a tool isn't configured (missing token) it will return an error — tell the user plainly which token is missing rather than pretending you did the action. When you create a Netlify site with envVars, or check a deploy status, report the actual deployStatus/state truthfully (e.g. "ready", "error", "building", "timed_out") — never tell the user a deploy succeeded unless the state is "ready". Once you have everything you need, reply with a clear, concrete final answer and no further tool calls.${memorySection}`;
 
   const userContent = fileText
     ? `${goal}\n\nAttached file content:\n${fileText.slice(0, 12000)}`
