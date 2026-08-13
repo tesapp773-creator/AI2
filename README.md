@@ -7,7 +7,7 @@ a hard sub-task to a second, bigger AI model — then reports back with a
 clear answer, and emails you when it's done.
 
 ## What this v6 does
-- **Real manager agent**: Groq (the "brain") decides which tool(s) a goal actually needs and calls them — not just Q&A.
+- **Real manager agent**: Groq (the "brain") decides which tool(s) a goal actually needs and calls them — not just Q&A. If Groq hits a rate limit mid-task, it automatically retries that step on Gemini instead of failing (needs a free Gemini key — see below).
 - **Recurring/scheduled tasks**: say "every day", "every hour", or "every week" in a goal and it keeps running automatically — via a Netlify Scheduled Function — even if you never open the app. It can also list or cancel what's scheduled.
 - **Email access**: reads/searches your inbox (via IMAP + a Gmail App Password), and can send emails on your behalf (via Resend).
 - **Live web search**: search_web (Tavily, free tier) for current facts, news, listings — no more guessing from memory.

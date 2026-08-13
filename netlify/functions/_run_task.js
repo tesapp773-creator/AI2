@@ -32,6 +32,8 @@ const {
 
 const MODEL = process.env.GROQ_MODEL || "openai/gpt-oss-120b";
 const API_KEY = process.env.GROQ_API_KEY;
+const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
+const GEMINI_FALLBACK_MODEL = process.env.GEMINI_MODEL || "gemini-2.5-flash";
 const MAX_TURNS = 6;
 
 const TOOLS = [
@@ -410,6 +412,136 @@ async function callGroq(messages) {
   return data.choices[0].message;
 }
 
+// --- Gemini fallback ---
+// Gemini has a different tool-calling shape than Groq's OpenAI-style API.
+// These helpers translate the SAME OpenAI-style `messages` array the rest
+// of the loop uses into Gemini's format and back, so runTask's loop below
+// never needs to know which provider actually answered a given turn.
+
+// Gemini's schema validation doesn't support every JSON Schema keyword we
+// use for Groq (e.g. additionalProperties on a free-form object) — strip
+// anything it's known to reject rather than risk the whole call failing.
+function sanitizeSchemaForGemini(schema) {
+  if (!schema || typeof schema !== "object") return schema;
+  const clone = Array.isArray(schema) ? [...schema] : { ...schema };
+  delete clone.additionalProperties;
+  for (const key of Object.keys(clone)) {
+    if (clone[key] && typeof clone[key] === "object") {
+      clone[key] = sanitizeSchemaForGemini(clone[key]);
+    }
+  }
+  return clone;
+}
+
+const GEMINI_TOOLS = [
+  {
+    function_declarations: TOOLS.map((t) => ({
+      name: t.function.name,
+      description: t.function.description,
+      parameters: sanitizeSchemaForGemini(t.function.parameters),
+    })),
+  },
+];
+
+function messagesToGeminiContents(messages) {
+  const contents = [];
+  const idToName = {};
+  for (const m of messages) {
+    if (m.role === "system") continue;
+    if (m.role === "user") {
+      contents.push({ role: "user", parts: [{ text: m.content || "" }] });
+    } else if (m.role === "assistant") {
+      if (m.tool_calls && m.tool_calls.length) {
+        const parts = m.tool_calls.map((call) => {
+          idToName[call.id] = call.function.name;
+          let args = {};
+          try {
+            args = JSON.parse(call.function.arguments || "{}");
+          } catch {
+            // leave args empty if malformed
+          }
+          return { functionCall: { name: call.function.name, args } };
+        });
+        contents.push({ role: "model", parts });
+      } else {
+        contents.push({ role: "model", parts: [{ text: m.content || "" }] });
+      }
+    } else if (m.role === "tool") {
+      const name = idToName[m.tool_call_id] || "unknown_function";
+      let responseObj;
+      try {
+        responseObj = JSON.parse(m.content);
+      } catch {
+        responseObj = { result: m.content };
+      }
+      contents.push({ role: "user", parts: [{ functionResponse: { name, response: responseObj } }] });
+    }
+  }
+  return contents;
+}
+
+// Converts Gemini's response back into the same shape callGroq returns
+// (an OpenAI-style assistant message), so the rest of the loop is identical
+// regardless of which provider actually handled the turn.
+function geminiResponseToMessage(data) {
+  const candidate = data.candidates && data.candidates[0];
+  const parts = (candidate && candidate.content && candidate.content.parts) || [];
+  const functionCallParts = parts.filter((p) => p.functionCall);
+  if (functionCallParts.length > 0) {
+    const tool_calls = functionCallParts.map((p, i) => ({
+      id: `gemini_call_${Date.now()}_${i}`,
+      type: "function",
+      function: { name: p.functionCall.name, arguments: JSON.stringify(p.functionCall.args || {}) },
+    }));
+    return { role: "assistant", content: null, tool_calls };
+  }
+  const text = parts.map((p) => p.text || "").join("");
+  return { role: "assistant", content: text || "(no response)" };
+}
+
+async function callGemini(messages) {
+  if (!GEMINI_API_KEY) {
+    throw new Error("GEMINI_API_KEY is not set — cannot fall back to Gemini.");
+  }
+  const systemMsg = messages.find((m) => m.role === "system");
+  const body = { contents: messagesToGeminiContents(messages), tools: GEMINI_TOOLS };
+  if (systemMsg) body.system_instruction = { parts: [{ text: systemMsg.content }] };
+
+  const res = await fetch(
+    `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_FALLBACK_MODEL}:generateContent`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "x-goog-api-key": GEMINI_API_KEY },
+      body: JSON.stringify(body),
+    }
+  );
+  const data = await res.json();
+  if (!res.ok) {
+    throw new Error(`Gemini fallback API error (${res.status}): ${JSON.stringify(data).slice(0, 500)}`);
+  }
+  return geminiResponseToMessage(data);
+}
+
+// Tries Groq first (the normal path). If Groq fails specifically because of
+// a rate limit, and a Gemini key is available, automatically retries the
+// SAME turn on Gemini instead of failing the whole task.
+async function callModel(messages, steps) {
+  try {
+    return await callGroq(messages);
+  } catch (err) {
+    const isRateLimit = /429|rate.?limit/i.test(err.message);
+    if (isRateLimit && GEMINI_API_KEY) {
+      steps.push("Groq hit a rate limit — automatically switching to Gemini for this step...");
+      try {
+        return await callGemini(messages);
+      } catch (geminiErr) {
+        throw new Error(`Groq rate-limited (${err.message}), and the Gemini fallback also failed: ${geminiErr.message}`);
+      }
+    }
+    throw err;
+  }
+}
+
 // Runs one full task end to end: creates the task row, runs the manager
 // loop, updates the row with the result, and emails the user. Used for
 // both on-demand tasks and recurring scheduled tasks.
@@ -441,7 +573,7 @@ async function runTask(supabase, { goal, fileText }) {
   try {
     let finalAnswer = null;
     for (let turn = 0; turn < MAX_TURNS; turn++) {
-      const message = await callGroq(messages);
+      const message = await callModel(messages, steps);
       messages.push(message);
 
       if (!message.tool_calls || message.tool_calls.length === 0) {
