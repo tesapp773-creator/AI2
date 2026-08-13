@@ -460,7 +460,7 @@ function messagesToGeminiContents(messages) {
           } catch {
             // leave args empty if malformed
           }
-          return { functionCall: { name: call.function.name, args } };
+          return { functionCall: { name: call.function.name, args }, thoughtSignature: "skip_thought_signature_validator" };
         });
         contents.push({ role: "model", parts });
       } else {
