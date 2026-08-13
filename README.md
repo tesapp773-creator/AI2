@@ -66,7 +66,7 @@ Site configuration → Environment variables → add whichever of these you want
 | `EMAIL_IMAP_USER` | No (enables reading your inbox) | your Gmail address |
 | `EMAIL_IMAP_APP_PASSWORD` | No (needed with IMAP user) | the 16-character Gmail App Password from step 1 |
 | `GEMINI_API_KEY` | No (enables delegating to Gemini) | from step 1 |
-| `GEMINI_MODEL` | No | overrides the default `gemini-2.5-flash` |
+| `GEMINI_MODEL` | No | overrides the default `gemini-3.5-flash` |
 
 Then Deploys tab → Trigger deploy → Deploy site.
 

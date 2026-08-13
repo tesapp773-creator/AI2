@@ -16,7 +16,7 @@ const NETLIFY_API_TOKEN = process.env.NETLIFY_API_TOKEN;
 const EMAIL_IMAP_USER = process.env.EMAIL_IMAP_USER;
 const EMAIL_IMAP_APP_PASSWORD = process.env.EMAIL_IMAP_APP_PASSWORD;
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
-const GEMINI_MODEL = process.env.GEMINI_MODEL || "gemini-2.5-flash";
+const GEMINI_MODEL = process.env.GEMINI_MODEL || "gemini-3.5-flash";
 
 function b64(str) {
   return Buffer.from(str, "utf-8").toString("base64");
