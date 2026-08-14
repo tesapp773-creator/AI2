@@ -8,6 +8,7 @@
 const {
   githubWriteFile,
   githubCreatePullRequest,
+  githubUndoLastCommit,
   githubListRepos,
   githubCreateRepo,
   netlifyDeploy,
@@ -19,12 +20,15 @@ const {
   aiDelegate,
   searchWeb,
   sendNotificationEmail,
+  sendNotificationWhatsApp,
   checkEmail,
   sendEmail,
   recallMemory,
   saveMemory,
   forgetMemory,
   listAllMemory,
+  checkCalendar,
+  createCalendarEvent,
   scheduleTask,
   listScheduledTasks,
   cancelScheduledTask,
@@ -123,6 +127,20 @@ const TOOLS = [
           },
         },
         required: ["title", "files"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "github_undo_last_commit",
+      description: "Undo the most recent commit on a branch by moving the branch back to its parent commit. This rewrites history (like a force-push reset), so only use it when the user explicitly asks to undo/revert their last change — never proactively.",
+      parameters: {
+        type: "object",
+        properties: {
+          branch: { type: "string", description: "Branch to undo on, defaults to \"main\"." },
+          repo: { type: "string", description: "\"owner/repo\" to act on. Omit only if the user didn't name a specific repo." },
+        },
       },
     },
   },
@@ -245,6 +263,39 @@ const TOOLS = [
   {
     type: "function",
     function: {
+      name: "check_calendar",
+      description: "List the user's upcoming Google Calendar events. Defaults to the next 7 days if no range is given.",
+      parameters: {
+        type: "object",
+        properties: {
+          timeMin: { type: "string", description: "ISO 8601 start of range, e.g. 2026-08-14T00:00:00Z. Omit for now." },
+          timeMax: { type: "string", description: "ISO 8601 end of range. Omit for 7 days from timeMin." },
+          maxResults: { type: "number", description: "Max events to return, default 15." },
+        },
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "create_calendar_event",
+      description: "Create a new event on the user's Google Calendar.",
+      parameters: {
+        type: "object",
+        properties: {
+          summary: { type: "string", description: "Event title." },
+          description: { type: "string" },
+          startDateTime: { type: "string", description: "ISO 8601 start time, e.g. 2026-08-20T14:00:00" },
+          endDateTime: { type: "string", description: "ISO 8601 end time." },
+          timeZone: { type: "string", description: "IANA timezone, e.g. Africa/Lagos. Defaults to UTC if omitted." },
+        },
+        required: ["summary", "startDateTime", "endDateTime"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
       name: "schedule_task",
       description: "Set up a goal to run automatically and repeatedly (e.g. \"every day\", \"every hour\", \"every week\") without the user asking again. Use this when the user says things like \"every day\", \"daily\", \"each morning\", \"every week\", or \"keep checking\".",
       parameters: {
@@ -331,6 +382,10 @@ async function runTool(name, args, steps, supabase) {
         steps.push(`Opening a pull request on ${args.repo || "the default repo"}: ${args.title}`);
         return await githubCreatePullRequest(args);
       }
+      case "github_undo_last_commit": {
+        steps.push(`Undoing the last commit on ${args.repo || "the default repo"}...`);
+        return await githubUndoLastCommit(args);
+      }
       case "netlify_deploy": {
         steps.push("Triggering a Netlify deploy...");
         return await netlifyDeploy();
@@ -376,6 +431,14 @@ async function runTool(name, args, steps, supabase) {
       case "list_memory": {
         steps.push("Listing everything remembered...");
         return await listAllMemory(supabase);
+      }
+      case "check_calendar": {
+        steps.push("Checking the calendar...");
+        return await checkCalendar(args);
+      }
+      case "create_calendar_event": {
+        steps.push(`Creating calendar event: ${args.summary}...`);
+        return await createCalendarEvent(args);
       }
       case "schedule_task": {
         steps.push(`Scheduling "${args.goal}" to run ${args.frequency}...`);
@@ -567,7 +630,7 @@ async function runTask(supabase, { goal, fileText }) {
   const memorySection = memoryFacts.length
     ? `\n\nThings you already know about the user from past tasks (use these, don't ask again if already answered here):\n- ${memoryFacts.join("\n- ")}`
     : "";
-  const systemPrompt = `You are MKDAI, a personal manager agent. You have real tools: search_web (search the live web for current info), fetch_url (read a specific web page), github_list_repos (list the user's repos), github_create_repo (create a brand-new repo), github_write_file / github_create_pull_request (act on ANY of the user's GitHub repos — pass 'repo' as "owner/repo" when the user names one, using github_list_repos first if you're not sure of the exact spelling), netlify_deploy (trigger a deploy for the main site), netlify_create_site (create a brand-new Netlify site, optionally linked to a GitHub repo, and optionally with its own environment variables set — when envVars are given it waits for the real deploy result instead of assuming success), netlify_check_deploy_status (check whether a site's latest deploy actually succeeded, is building, or failed, with the real error if it failed), check_email (read/search the user's inbox), send_email (send an email on the user's behalf), ai_delegate (hand a sub-task to another free AI model for deeper reasoning or coding — Groq by default, or Gemini if the user asks for it by name), save_memory / forget_memory / list_memory (manage durable facts about the user across tasks), and schedule_task / list_scheduled_tasks / cancel_scheduled_task (set up, view, or stop goals that run automatically on a recurring schedule — hourly, daily, or weekly — without the user asking again). Use tools when the user's goal actually requires an action or current information you don't have — prefer search_web for anything current (news, listings, facts) rather than guessing from memory. When a tool isn't configured (missing token) it will return an error — tell the user plainly which token is missing rather than pretending you did the action. When you create a Netlify site with envVars, or check a deploy status, report the actual deployStatus/state truthfully (e.g. "ready", "error", "building", "timed_out") — never tell the user a deploy succeeded unless the state is "ready". Once you have everything you need, reply with a clear, concrete final answer and no further tool calls.${memorySection}`;
+  const systemPrompt = `You are MKDAI, a personal manager agent. You have real tools: search_web (search the live web for current info), fetch_url (read a specific web page), github_list_repos (list the user's repos), github_create_repo (create a brand-new repo), github_write_file / github_create_pull_request / github_undo_last_commit (act on ANY of the user's GitHub repos, including undoing the last commit if the user explicitly asks — pass 'repo' as "owner/repo" when the user names one, using github_list_repos first if you're not sure of the exact spelling), netlify_deploy (trigger a deploy for the main site), netlify_create_site (create a brand-new Netlify site, optionally linked to a GitHub repo, and optionally with its own environment variables set — when envVars are given it waits for the real deploy result instead of assuming success), netlify_check_deploy_status (check whether a site's latest deploy actually succeeded, is building, or failed, with the real error if it failed), check_email (read/search the user's inbox), send_email (send an email on the user's behalf), check_calendar / create_calendar_event (view or create Google Calendar events), ai_delegate (hand a sub-task to another free AI model for deeper reasoning or coding — Groq by default, or Gemini if the user asks for it by name), save_memory / forget_memory / list_memory (manage durable facts about the user across tasks), and schedule_task / list_scheduled_tasks / cancel_scheduled_task (set up, view, or stop goals that run automatically on a recurring schedule — hourly, daily, or weekly — without the user asking again). Use tools when the user's goal actually requires an action or current information you don't have — prefer search_web for anything current (news, listings, facts) rather than guessing from memory. When a tool isn't configured (missing token) it will return an error — tell the user plainly which token is missing rather than pretending you did the action. When you create a Netlify site with envVars, or check a deploy status, report the actual deployStatus/state truthfully (e.g. "ready", "error", "building", "timed_out") — never tell the user a deploy succeeded unless the state is "ready". Once you have everything you need, reply with a clear, concrete final answer and no further tool calls.${memorySection}`;
 
   const userContent = fileText
     ? `${goal}\n\nAttached file content:\n${fileText.slice(0, 12000)}`
@@ -615,6 +678,7 @@ async function runTask(supabase, { goal, fileText }) {
       .update({ status: "done", answer: finalAnswer, sources: [], steps, updated_at: new Date().toISOString() })
       .eq("id", taskId);
     await sendNotificationEmail({ goal, status: "done", answer: finalAnswer });
+    await sendNotificationWhatsApp({ goal, status: "done", answer: finalAnswer });
 
     return { id: taskId, answer: finalAnswer, sources: [], steps };
   } catch (err) {
@@ -623,6 +687,7 @@ async function runTask(supabase, { goal, fileText }) {
       .update({ status: "error", error: err.message, steps, updated_at: new Date().toISOString() })
       .eq("id", taskId);
     await sendNotificationEmail({ goal, status: "error", error: err.message });
+    await sendNotificationWhatsApp({ goal, status: "error", error: err.message });
     throw err;
   }
 }

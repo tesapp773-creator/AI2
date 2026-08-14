@@ -6,7 +6,10 @@ write to GitHub, open a pull request, trigger a Netlify deploy, or delegate
 a hard sub-task to a second, bigger AI model — then reports back with a
 clear answer, and emails you when it's done.
 
-## What this v6 does
+## What this v7 does
+- **GitHub undo**: "undo my last commit" moves the branch back to its parent commit — a real safety net now that it commits freely on its own.
+- **Google Calendar**: check upcoming events or create new ones, via your own Google login (needs a one-time OAuth setup, not just an API key — see below).
+- **WhatsApp notifications**: get a WhatsApp message (via Twilio's free sandbox) when a task finishes or fails, alongside or instead of email.
 - **Real manager agent**: Groq (the "brain") decides which tool(s) a goal actually needs and calls them — not just Q&A. If Groq hits a rate limit mid-task, it automatically retries that step on Gemini instead of failing (needs a free Gemini key — see below).
 - **Recurring/scheduled tasks**: say "every day", "every hour", or "every week" in a goal and it keeps running automatically — via a Netlify Scheduled Function — even if you never open the app. It can also list or cancel what's scheduled.
 - **Email access**: reads/searches your inbox and sends emails on your behalf, both via the same Gmail App Password — can send to any recipient, not just yourself.
@@ -67,6 +70,13 @@ Site configuration → Environment variables → add whichever of these you want
 | `EMAIL_IMAP_APP_PASSWORD` | No (needed with IMAP user) | the 16-character Gmail App Password from step 1 |
 | `GEMINI_API_KEY` | No (enables delegating to Gemini) | from step 1 |
 | `GEMINI_MODEL` | No | overrides the default `gemini-3.5-flash` |
+| `GOOGLE_CLIENT_ID` | No (enables Calendar) | from Google Cloud Console — see step 5 |
+| `GOOGLE_CLIENT_SECRET` | No (needed with client ID) | from Google Cloud Console — see step 5 |
+| `GOOGLE_REFRESH_TOKEN` | No (needed with the above) | one-time token via OAuth Playground — see step 5 |
+| `TWILIO_ACCOUNT_SID` | No (enables WhatsApp notifications) | from twilio.com console |
+| `TWILIO_AUTH_TOKEN` | No (needed with SID) | from twilio.com console |
+| `TWILIO_WHATSAPP_FROM` | No | overrides the default Twilio sandbox number `whatsapp:+14155238886` |
+| `NOTIFY_WHATSAPP_TO` | No (needed to actually receive messages) | your WhatsApp number, e.g. `whatsapp:+2348012345678` |
 
 Then Deploys tab → Trigger deploy → Deploy site.
 

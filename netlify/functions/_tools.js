@@ -17,6 +17,13 @@ const EMAIL_IMAP_USER = process.env.EMAIL_IMAP_USER;
 const EMAIL_IMAP_APP_PASSWORD = process.env.EMAIL_IMAP_APP_PASSWORD;
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 const GEMINI_MODEL = process.env.GEMINI_MODEL || "gemini-3.5-flash";
+const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID;
+const GOOGLE_CLIENT_SECRET = process.env.GOOGLE_CLIENT_SECRET;
+const GOOGLE_REFRESH_TOKEN = process.env.GOOGLE_REFRESH_TOKEN;
+const TWILIO_ACCOUNT_SID = process.env.TWILIO_ACCOUNT_SID;
+const TWILIO_AUTH_TOKEN = process.env.TWILIO_AUTH_TOKEN;
+const TWILIO_WHATSAPP_FROM = process.env.TWILIO_WHATSAPP_FROM || "whatsapp:+14155238886"; // Twilio's shared sandbox number
+const NOTIFY_WHATSAPP_TO = process.env.NOTIFY_WHATSAPP_TO; // e.g. "whatsapp:+2348012345678"
 
 function b64(str) {
   return Buffer.from(str, "utf-8").toString("base64");
@@ -123,6 +130,32 @@ async function githubCreatePullRequest({ title, body, files, base = "main", bran
     body: JSON.stringify({ title, body: body || "", head: branchName, base }),
   }, repo);
   return { prUrl: pr.html_url, branch: branchName, repo: repo || GITHUB_REPO };
+}
+
+// Undo the most recent commit on a branch by moving the branch pointer back
+// to its parent commit. Note: this rewrites history (like `git reset --hard`
+// + force push), not a safe "revert commit" — fine for personal/solo repos,
+// but anyone else who already pulled that commit will have a mismatched
+// history. Returns what was undone so the agent can confirm clearly.
+async function githubUndoLastCommit({ branch = "main", repo }) {
+  const ref = await ghFetch(`/git/refs/heads/${branch}`, {}, repo);
+  const headSha = ref.object.sha;
+  const commit = await ghFetch(`/commits/${headSha}`, {}, repo);
+  if (!commit.parents || commit.parents.length === 0) {
+    throw new Error("Can't undo — this is the very first commit on the branch, it has no parent to go back to.");
+  }
+  const parentSha = commit.parents[0].sha;
+  await ghFetch(`/git/refs/heads/${branch}`, {
+    method: "PATCH",
+    body: JSON.stringify({ sha: parentSha, force: true }),
+  }, repo);
+  return {
+    repo: repo || GITHUB_REPO,
+    branch,
+    undoneCommitMessage: commit.commit && commit.commit.message,
+    undoneCommitSha: headSha,
+    newHeadSha: parentSha,
+  };
 }
 
 // Trigger a Netlify deploy via a build hook (a secret URL from Netlify, not a token).
@@ -432,6 +465,30 @@ async function sendNotificationEmail({ goal, status, answer, error }) {
   }
 }
 
+// Notify the user via WhatsApp (Twilio sandbox) when a task finishes or
+// fails — same idea as sendNotificationEmail, just a different channel.
+// Silently does nothing if not configured, same as the email version.
+async function sendNotificationWhatsApp({ goal, status, answer, error }) {
+  if (!TWILIO_ACCOUNT_SID || !TWILIO_AUTH_TOKEN || !NOTIFY_WHATSAPP_TO) return { skipped: true };
+  const body = status === "error"
+    ? `❌ MKDAI task failed.\n\nGoal: ${goal}\n\nError: ${error}`.slice(0, 1500)
+    : `✅ MKDAI task done.\n\nGoal: ${goal}\n\nAnswer:\n${answer}`.slice(0, 1500);
+  try {
+    const auth = Buffer.from(`${TWILIO_ACCOUNT_SID}:${TWILIO_AUTH_TOKEN}`).toString("base64");
+    await fetch(`https://api.twilio.com/2010-04-01/Accounts/${TWILIO_ACCOUNT_SID}/Messages.json`, {
+      method: "POST",
+      headers: {
+        Authorization: `Basic ${auth}`,
+        "Content-Type": "application/x-www-form-urlencoded",
+      },
+      body: new URLSearchParams({ From: TWILIO_WHATSAPP_FROM, To: NOTIFY_WHATSAPP_TO, Body: body }),
+    });
+    return { sent: true };
+  } catch (err) {
+    return { sent: false, error: err.message };
+  }
+}
+
 // Persistent cross-task memory, stored in Supabase (table: mkdai_memory).
 // recallMemory is called automatically before every task; saveMemory is a
 // tool the agent can call when the user tells it something worth keeping.
@@ -478,6 +535,77 @@ async function listAllMemory(supabase) {
   return { facts: (data || []).map((row) => row.fact) };
 }
 
+// --- Google Calendar ---
+// Uses a one-time OAuth refresh token (not a simple API key — Calendar
+// data is private, so Google requires the user to have actually logged in
+// and granted access once). Each call exchanges the refresh token for a
+// fresh short-lived access token, since access tokens expire hourly and
+// there's no persistent process here to cache one safely.
+async function getGoogleAccessToken() {
+  if (!GOOGLE_CLIENT_ID || !GOOGLE_CLIENT_SECRET || !GOOGLE_REFRESH_TOKEN) {
+    throw new Error("GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET / GOOGLE_REFRESH_TOKEN are not all set in Netlify environment variables (needed for Calendar access).");
+  }
+  const res = await fetch("https://oauth2.googleapis.com/token", {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({
+      client_id: GOOGLE_CLIENT_ID,
+      client_secret: GOOGLE_CLIENT_SECRET,
+      refresh_token: GOOGLE_REFRESH_TOKEN,
+      grant_type: "refresh_token",
+    }),
+  });
+  const data = await res.json();
+  if (!res.ok) {
+    throw new Error(`Google token refresh error (${res.status}): ${JSON.stringify(data).slice(0, 400)}`);
+  }
+  return data.access_token;
+}
+
+// List upcoming events on the primary calendar (default: next 7 days).
+async function checkCalendar({ timeMin, timeMax, maxResults = 15 }) {
+  const accessToken = await getGoogleAccessToken();
+  const now = new Date();
+  const min = timeMin || now.toISOString();
+  const max = timeMax || new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000).toISOString();
+  const url = `https://www.googleapis.com/calendar/v3/calendars/primary/events?timeMin=${encodeURIComponent(min)}&timeMax=${encodeURIComponent(max)}&maxResults=${maxResults}&singleEvents=true&orderBy=startTime`;
+  const res = await fetch(url, { headers: { Authorization: `Bearer ${accessToken}` } });
+  const data = await res.json();
+  if (!res.ok) {
+    throw new Error(`Google Calendar API error (${res.status}): ${JSON.stringify(data).slice(0, 400)}`);
+  }
+  const events = (data.items || []).map((e) => ({
+    summary: e.summary || "(no title)",
+    start: e.start && (e.start.dateTime || e.start.date),
+    end: e.end && (e.end.dateTime || e.end.date),
+    location: e.location || null,
+  }));
+  return { events };
+}
+
+// Create a new event on the primary calendar.
+async function createCalendarEvent({ summary, description, startDateTime, endDateTime, timeZone = "UTC" }) {
+  const accessToken = await getGoogleAccessToken();
+  const res = await fetch("https://www.googleapis.com/calendar/v3/calendars/primary/events", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      summary,
+      description: description || "",
+      start: { dateTime: startDateTime, timeZone },
+      end: { dateTime: endDateTime, timeZone },
+    }),
+  });
+  const data = await res.json();
+  if (!res.ok) {
+    throw new Error(`Google Calendar API error (${res.status}) creating event: ${JSON.stringify(data).slice(0, 400)}`);
+  }
+  return { eventId: data.id, htmlLink: data.htmlLink, summary: data.summary };
+}
+
 // Recurring tasks, stored in Supabase (table: mkdai_scheduled_tasks).
 // A Netlify Scheduled Function checks this table hourly and runs whatever
 // is due, so these keep running even if the app is never opened.
@@ -519,6 +647,7 @@ async function cancelScheduledTask(supabase, { query }) {
 module.exports = {
   githubWriteFile,
   githubCreatePullRequest,
+  githubUndoLastCommit,
   githubListRepos,
   githubCreateRepo,
   netlifyDeploy,
@@ -532,10 +661,13 @@ module.exports = {
   aiDelegate,
   searchWeb,
   sendNotificationEmail,
+  sendNotificationWhatsApp,
   recallMemory,
   saveMemory,
   forgetMemory,
   listAllMemory,
+  checkCalendar,
+  createCalendarEvent,
   scheduleTask,
   listScheduledTasks,
   cancelScheduledTask,
