@@ -9,7 +9,7 @@ clear answer, and emails you when it's done.
 ## What this v6 does
 - **Real manager agent**: Groq (the "brain") decides which tool(s) a goal actually needs and calls them — not just Q&A. If Groq hits a rate limit mid-task, it automatically retries that step on Gemini instead of failing (needs a free Gemini key — see below).
 - **Recurring/scheduled tasks**: say "every day", "every hour", or "every week" in a goal and it keeps running automatically — via a Netlify Scheduled Function — even if you never open the app. It can also list or cancel what's scheduled.
-- **Email access**: reads/searches your inbox (via IMAP + a Gmail App Password), and can send emails on your behalf (via Resend).
+- **Email access**: reads/searches your inbox and sends emails on your behalf, both via the same Gmail App Password — can send to any recipient, not just yourself.
 - **Live web search**: search_web (Tavily, free tier) for current facts, news, listings — no more guessing from memory.
 - **GitHub worker, any repo**: create/update files or open pull requests on ANY repo your token can access — not locked to one. Name a repo in your goal and it'll match it (or list your repos to check spelling). Can also create brand-new repos (requires a classic token — see below).
 - **Netlify project creation, fully configured**: create a brand-new Netlify site, optionally linked to a new GitHub repo, and optionally with its own environment variables set — e.g. "create a new repo and Netlify site called my-app, and set GROQ_API_KEY to X on it." When it sets env vars, it triggers a fresh build and actually waits to confirm the deploy succeeded, reporting the real outcome instead of assuming success. It can also check deploy status on any site by ID at any time.
@@ -31,7 +31,7 @@ Each worker only activates if its token is configured — if you skip one, MKDAI
 - **Netlify personal access token** (optional, for creating brand-new sites): Netlify → User settings → Applications → New access token.
 - **AI delegate worker**: no extra key needed for Groq — it reuses your `GROQ_API_KEY` from above. For Gemini as a second option, get a free key at https://aistudio.google.com/apikey (no card needed).
 - **Tavily** (optional, web search): https://tavily.com — free tier, no card.
-- **Resend** (optional, email notifications + sending): https://resend.com — free tier, no card. Note: the default sender (`onboarding@resend.dev`) can only send to the email address you signed up to Resend with, unless you verify your own domain — so "send an email to someone else" may fail on the free tier until you verify a domain.
+- **Resend** (optional, email notifications only — sending emails to others now uses your Gmail login instead, see below): https://resend.com — free tier, no card.
 - **Gmail App Password** (optional, reading your inbox): requires 2-Step Verification enabled on your Google account. Go to https://myaccount.google.com/apppasswords, create one for "Mail", copy the 16-character password.
 
 ## 2. Supabase (already set up)

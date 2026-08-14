@@ -302,31 +302,27 @@ async function checkEmail({ query, limit = 10 }) {
   return { messages: messages.reverse() };
 }
 
-// Send an email on the user's behalf via Resend. Note: Resend's free tier
-// default sender (onboarding@resend.dev) can only deliver to the address
-// the Resend account itself was signed up with, unless a custom domain is
-// verified — this will error clearly if that limit is hit.
+// Send an email on the user's behalf via Gmail SMTP, reusing the same
+// EMAIL_IMAP_USER / EMAIL_IMAP_APP_PASSWORD credentials already set up for
+// reading the inbox. Unlike the free Resend tier, Gmail can send to ANY
+// recipient — no domain verification needed.
 async function sendEmail({ to, subject, body }) {
-  if (!RESEND_API_KEY) {
-    throw new Error("RESEND_API_KEY is not set in Netlify environment variables.");
+  if (!EMAIL_IMAP_USER || !EMAIL_IMAP_APP_PASSWORD) {
+    throw new Error("EMAIL_IMAP_USER and/or EMAIL_IMAP_APP_PASSWORD is not set in Netlify environment variables (needed to send via Gmail).");
   }
-  const res = await fetch("https://api.resend.com/emails", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${RESEND_API_KEY}`,
-    },
-    body: JSON.stringify({
-      from: "MKDAI <onboarding@resend.dev>",
-      to: [to],
-      subject,
-      text: body,
-    }),
+  const nodemailer = require("nodemailer");
+  const transporter = nodemailer.createTransport({
+    host: "smtp.gmail.com",
+    port: 465,
+    secure: true,
+    auth: { user: EMAIL_IMAP_USER, pass: EMAIL_IMAP_APP_PASSWORD },
   });
-  const data = await res.json().catch(() => ({}));
-  if (!res.ok) {
-    throw new Error(`Resend API error (${res.status}): ${JSON.stringify(data).slice(0, 400)} — note: the free Resend sender can usually only email the address the Resend account was signed up with, unless a custom domain is verified.`);
-  }
+  await transporter.sendMail({
+    from: `MKDAI <${EMAIL_IMAP_USER}>`,
+    to,
+    subject,
+    text: body,
+  });
   return { sent: true, to, subject };
 }
 

@@ -183,7 +183,7 @@ const TOOLS = [
     type: "function",
     function: {
       name: "send_email",
-      description: "Send an email on the user's behalf to a given recipient.",
+      description: "Send an email on the user's behalf to any recipient (sent via the user's own Gmail account).",
       parameters: {
         type: "object",
         properties: {
