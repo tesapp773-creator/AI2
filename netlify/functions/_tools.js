@@ -94,6 +94,39 @@ async function githubCreateRepo({ name, description, isPrivate = false }) {
   return { repo: data.full_name, url: data.html_url };
 }
 
+// Permanently delete a repo. IRREVERSIBLE — the caller (see the system
+// prompt / tool description) must only invoke this after the user has
+// explicitly confirmed, in their own words, that they want THIS specific
+// repo deleted. `confirmed` must literally be true, as a second guard.
+// Requires a classic token with the separate 'delete_repo' scope — plain
+// 'repo' scope is NOT enough for GitHub to allow this.
+async function githubDeleteRepo({ repo, confirmed }) {
+  if (!GITHUB_TOKEN) {
+    throw new Error("GITHUB_TOKEN is not set in Netlify environment variables.");
+  }
+  if (!repo) {
+    throw new Error("No repo specified to delete.");
+  }
+  if (confirmed !== true) {
+    throw new Error("Deletion was not explicitly confirmed — refusing to delete. Ask the user to clearly confirm before calling this again.");
+  }
+  const res = await fetch(`https://api.github.com/repos/${repo}`, {
+    method: "DELETE",
+    headers: {
+      Authorization: `Bearer ${GITHUB_TOKEN}`,
+      Accept: "application/vnd.github+json",
+    },
+  });
+  if (res.status !== 204) {
+    const data = await res.json().catch(() => ({}));
+    const hint = res.status === 403
+      ? " (the token likely lacks the 'delete_repo' scope — plain 'repo' scope doesn't allow deletion; generate a classic token with 'delete_repo' checked too)"
+      : "";
+    throw new Error(`GitHub API error (${res.status}) deleting repo: ${JSON.stringify(data).slice(0, 300)}${hint}`);
+  }
+  return { deleted: true, repo };
+}
+
 // Create or update a single file directly on a branch (default: main).
 // `repo` is optional — "owner/repo"; falls back to GITHUB_REPO if omitted.
 async function githubWriteFile({ path, content, message, branch = "main", repo }) {
@@ -650,6 +683,7 @@ module.exports = {
   githubUndoLastCommit,
   githubListRepos,
   githubCreateRepo,
+  githubDeleteRepo,
   netlifyDeploy,
   netlifyCreateSite,
   netlifySetEnvVars,

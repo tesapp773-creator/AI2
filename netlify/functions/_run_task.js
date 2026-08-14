@@ -11,6 +11,7 @@ const {
   githubUndoLastCommit,
   githubListRepos,
   githubCreateRepo,
+  githubDeleteRepo,
   netlifyDeploy,
   netlifyCreateSite,
   netlifySetEnvVars,
@@ -86,6 +87,21 @@ const TOOLS = [
           isPrivate: { type: "boolean", description: "true for a private repo, false (default) for public." },
         },
         required: ["name"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "github_delete_repo",
+      description: "PERMANENTLY delete a GitHub repository. This is IRREVERSIBLE. STRICT RULE: only call this tool if the user's message in THIS SAME goal already contains an explicit, unambiguous confirmation to delete that exact repo (e.g. they said \"yes, delete it\", \"confirm\", or clearly asked to delete it more than once). If a goal ONLY asks to delete a repo without prior confirmation, do NOT call this tool — instead reply asking the user to confirm the exact repo name and that they understand it cannot be undone, and stop there. When you do call it, set confirmed to true.",
+      parameters: {
+        type: "object",
+        properties: {
+          repo: { type: "string", description: "\"owner/repo\" — the exact repo to delete." },
+          confirmed: { type: "boolean", description: "Must be true, and only true if the user explicitly confirmed in this same goal." },
+        },
+        required: ["repo", "confirmed"],
       },
     },
   },
@@ -374,6 +390,10 @@ async function runTool(name, args, steps, supabase) {
         steps.push(`Creating a new GitHub repo: ${args.name}...`);
         return await githubCreateRepo(args);
       }
+      case "github_delete_repo": {
+        steps.push(`Deleting GitHub repo ${args.repo} (confirmed by user)...`);
+        return await githubDeleteRepo(args);
+      }
       case "github_write_file": {
         steps.push(`Writing ${args.path} to ${args.repo || "the default repo"}...`);
         return await githubWriteFile(args);
@@ -630,7 +650,7 @@ async function runTask(supabase, { goal, fileText }) {
   const memorySection = memoryFacts.length
     ? `\n\nThings you already know about the user from past tasks (use these, don't ask again if already answered here):\n- ${memoryFacts.join("\n- ")}`
     : "";
-  const systemPrompt = `You are MKDAI, a personal manager agent. You have real tools: search_web (search the live web for current info), fetch_url (read a specific web page), github_list_repos (list the user's repos), github_create_repo (create a brand-new repo), github_write_file / github_create_pull_request / github_undo_last_commit (act on ANY of the user's GitHub repos, including undoing the last commit if the user explicitly asks — pass 'repo' as "owner/repo" when the user names one, using github_list_repos first if you're not sure of the exact spelling), netlify_deploy (trigger a deploy for the main site), netlify_create_site (create a brand-new Netlify site, optionally linked to a GitHub repo, and optionally with its own environment variables set — when envVars are given it waits for the real deploy result instead of assuming success), netlify_check_deploy_status (check whether a site's latest deploy actually succeeded, is building, or failed, with the real error if it failed), check_email (read/search the user's inbox), send_email (send an email on the user's behalf), check_calendar / create_calendar_event (view or create Google Calendar events), ai_delegate (hand a sub-task to another free AI model for deeper reasoning or coding — Groq by default, or Gemini if the user asks for it by name), save_memory / forget_memory / list_memory (manage durable facts about the user across tasks), and schedule_task / list_scheduled_tasks / cancel_scheduled_task (set up, view, or stop goals that run automatically on a recurring schedule — hourly, daily, or weekly — without the user asking again). Use tools when the user's goal actually requires an action or current information you don't have — prefer search_web for anything current (news, listings, facts) rather than guessing from memory. When a tool isn't configured (missing token) it will return an error — tell the user plainly which token is missing rather than pretending you did the action. When you create a Netlify site with envVars, or check a deploy status, report the actual deployStatus/state truthfully (e.g. "ready", "error", "building", "timed_out") — never tell the user a deploy succeeded unless the state is "ready". Once you have everything you need, reply with a clear, concrete final answer and no further tool calls.${memorySection}`;
+  const systemPrompt = `You are MKDAI, a personal manager agent. You have real tools: search_web (search the live web for current info), fetch_url (read a specific web page), github_list_repos (list the user's repos), github_create_repo (create a brand-new repo), github_delete_repo (PERMANENTLY delete a repo — see strict rule below), github_write_file / github_create_pull_request / github_undo_last_commit (act on ANY of the user's GitHub repos, including undoing the last commit if the user explicitly asks — pass 'repo' as "owner/repo" when the user names one, using github_list_repos first if you're not sure of the exact spelling), netlify_deploy (trigger a deploy for the main site), netlify_create_site (create a brand-new Netlify site, optionally linked to a GitHub repo, and optionally with its own environment variables set — when envVars are given it waits for the real deploy result instead of assuming success), netlify_check_deploy_status (check whether a site's latest deploy actually succeeded, is building, or failed, with the real error if it failed), check_email (read/search the user's inbox), send_email (send an email on the user's behalf), check_calendar / create_calendar_event (view or create Google Calendar events), ai_delegate (hand a sub-task to another free AI model for deeper reasoning or coding — Groq by default, or Gemini if the user asks for it by name), save_memory / forget_memory / list_memory (manage durable facts about the user across tasks), and schedule_task / list_scheduled_tasks / cancel_scheduled_task (set up, view, or stop goals that run automatically on a recurring schedule — hourly, daily, or weekly — without the user asking again). Use tools when the user's goal actually requires an action or current information you don't have — prefer search_web for anything current (news, listings, facts) rather than guessing from memory. When a tool isn't configured (missing token) it will return an error — tell the user plainly which token is missing rather than pretending you did the action. When you create a Netlify site with envVars, or check a deploy status, report the actual deployStatus/state truthfully (e.g. "ready", "error", "building", "timed_out") — never tell the user a deploy succeeded unless the state is "ready". Once you have everything you need, reply with a clear, concrete final answer and no further tool calls. CRITICAL SAFETY RULE: repo deletion is the one action that always needs the user's explicit confirmation first, even though everything else runs without asking — never call github_delete_repo on a first request to delete something; ask for confirmation in your answer instead, and only delete once the user has clearly confirmed in their own words.${memorySection}`;
 
   const userContent = fileText
     ? `${goal}\n\nAttached file content:\n${fileText.slice(0, 12000)}`
