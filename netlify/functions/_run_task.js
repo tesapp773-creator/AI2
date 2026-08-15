@@ -48,7 +48,7 @@ const MODEL = process.env.GROQ_MODEL || "openai/gpt-oss-120b";
 const API_KEY = process.env.GROQ_API_KEY;
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 const GEMINI_FALLBACK_MODEL = process.env.GEMINI_MODEL || "gemini-3.5-flash";
-const MAX_TURNS = 6;
+const MAX_TURNS = 14; // multi-step browser tasks (navigate, fill several fields, click, verify) need more room than a simple search
 
 const TOOLS = [
   {
