@@ -6,7 +6,8 @@ write to GitHub, open a pull request, trigger a Netlify deploy, or delegate
 a hard sub-task to a second, bigger AI model — then reports back with a
 clear answer, and emails you when it's done.
 
-## What this v8 does
+## What this v9 does
+- **Multi-key resilience**: add backup Groq and Gemini accounts (GROQ_API_KEY_2/_3, GEMINI_API_KEY_2/_3) and it automatically rotates to the next one when one hits a rate limit, instead of failing.
 - **Browser automation**: opens a real (headless) browser and can navigate to a site, click buttons, fill in forms, read what's on the page, and take a screenshot — for sites that plain fetching can't handle (JavaScript-heavy pages, things that need clicking/typing). No new keys needed — it's a heavier feature than the rest (a real browser process), so it may need some real-world tuning as you use it.
 - **GitHub undo**: "undo my last commit" moves the branch back to its parent commit — a real safety net now that it commits freely on its own.
 - **Google Calendar**: check upcoming events or create new ones, via your own Google login (needs a one-time OAuth setup, not just an API key — see below).
@@ -70,6 +71,8 @@ Site configuration → Environment variables → add whichever of these you want
 | `EMAIL_IMAP_USER` | No (enables reading your inbox) | your Gmail address |
 | `EMAIL_IMAP_APP_PASSWORD` | No (needed with IMAP user) | the 16-character Gmail App Password from step 1 |
 | `GEMINI_API_KEY` | No (enables delegating to Gemini) | from step 1 |
+| `GROQ_API_KEY_2` / `GROQ_API_KEY_3` | No (optional backup accounts) | extra free Groq accounts — used automatically if the main one is rate-limited |
+| `GEMINI_API_KEY_2` / `GEMINI_API_KEY_3` | No (optional backup accounts) | extra free Gemini accounts — same idea |
 | `GEMINI_MODEL` | No | overrides the default `gemini-3.5-flash` |
 | `GOOGLE_CLIENT_ID` | No (enables Calendar) | from Google Cloud Console — see step 5 |
 | `GOOGLE_CLIENT_SECRET` | No (needed with client ID) | from Google Cloud Console — see step 5 |

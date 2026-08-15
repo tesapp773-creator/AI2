@@ -45,8 +45,11 @@ const {
 } = require("./_browser");
 
 const MODEL = process.env.GROQ_MODEL || "openai/gpt-oss-120b";
-const API_KEY = process.env.GROQ_API_KEY;
-const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
+// Supports multiple backup keys, so a rate limit on one account doesn't
+// stop the task — GROQ_API_KEY is required, GROQ_API_KEY_2 / _3 are
+// optional extra accounts to rotate through when one gets rate-limited.
+const GROQ_KEYS = [process.env.GROQ_API_KEY, process.env.GROQ_API_KEY_2, process.env.GROQ_API_KEY_3].filter(Boolean);
+const GEMINI_KEYS = [process.env.GEMINI_API_KEY, process.env.GEMINI_API_KEY_2, process.env.GEMINI_API_KEY_3].filter(Boolean);
 const GEMINI_FALLBACK_MODEL = process.env.GEMINI_MODEL || "gemini-3.5-flash";
 const MAX_TURNS = 14; // multi-step browser tasks (navigate, fill several fields, click, verify) need more room than a simple search
 
@@ -574,10 +577,10 @@ async function runTool(name, args, steps, supabase, browserSession) {
   }
 }
 
-async function callGroq(messages) {
+async function callGroq(messages, apiKey) {
   const res = await fetch("https://api.groq.com/openai/v1/chat/completions", {
     method: "POST",
-    headers: { "Content-Type": "application/json", Authorization: `Bearer ${API_KEY}` },
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
     body: JSON.stringify({ model: MODEL, messages, tools: TOOLS }),
   });
   if (!res.ok) {
@@ -686,10 +689,7 @@ function geminiResponseToMessage(data) {
   return { role: "assistant", content: `I wasn't able to finish this — ${reason} Try rephrasing the goal or breaking it into smaller steps.` };
 }
 
-async function callGemini(messages) {
-  if (!GEMINI_API_KEY) {
-    throw new Error("GEMINI_API_KEY is not set — cannot fall back to Gemini.");
-  }
+async function callGemini(messages, apiKey) {
   const systemMsg = messages.find((m) => m.role === "system");
   const body = {
     contents: messagesToGeminiContents(messages),
@@ -706,42 +706,56 @@ async function callGemini(messages) {
     `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_FALLBACK_MODEL}:generateContent`,
     {
       method: "POST",
-      headers: { "Content-Type": "application/json", "x-goog-api-key": GEMINI_API_KEY },
+      headers: { "Content-Type": "application/json", "x-goog-api-key": apiKey },
       body: JSON.stringify(body),
     }
   );
   const data = await res.json();
   if (!res.ok) {
-    throw new Error(`Gemini fallback API error (${res.status}): ${JSON.stringify(data).slice(0, 500)}`);
+    throw new Error(`Gemini API error (${res.status}): ${JSON.stringify(data).slice(0, 500)}`);
   }
   return geminiResponseToMessage(data);
 }
 
-// Tries Groq first (the normal path). If Groq fails specifically because of
-// a rate limit, and a Gemini key is available, automatically retries the
-// SAME turn on Gemini instead of failing the whole task.
+// Tries every available Groq key in order (skipping to the next one only on
+// a rate-limit error — any other kind of error fails immediately, since
+// retrying a different key won't fix a real bug). If ALL Groq keys are
+// rate-limited, falls through to trying every available Gemini key the
+// same way. Only fails the whole task if every single key is exhausted.
 async function callModel(messages, steps) {
-  try {
-    return await callGroq(messages);
-  } catch (err) {
-    const isRateLimit = /429|rate.?limit/i.test(err.message);
-    if (isRateLimit && GEMINI_API_KEY) {
-      steps.push("Groq hit a rate limit — automatically switching to Gemini for this step...");
-      try {
-        return await callGemini(messages);
-      } catch (geminiErr) {
-        throw new Error(`Groq rate-limited (${err.message}), and the Gemini fallback also failed: ${geminiErr.message}`);
-      }
-    }
-    throw err;
+  if (GROQ_KEYS.length === 0) {
+    throw new Error("No GROQ_API_KEY is set on the server. Add it in Netlify > Site configuration > Environment variables, then redeploy.");
   }
+  let lastErr;
+  for (let i = 0; i < GROQ_KEYS.length; i++) {
+    try {
+      return await callGroq(messages, GROQ_KEYS[i]);
+    } catch (err) {
+      lastErr = err;
+      if (!/429|rate.?limit/i.test(err.message)) throw err;
+      if (i < GROQ_KEYS.length - 1) steps.push(`Groq key ${i + 1} hit a rate limit — trying backup key ${i + 2}...`);
+    }
+  }
+  if (GEMINI_KEYS.length === 0) {
+    throw new Error(`All Groq keys are rate-limited, and no GEMINI_API_KEY is set as a fallback. Last error: ${lastErr.message}`);
+  }
+  steps.push("All Groq keys are rate-limited — switching to Gemini...");
+  for (let i = 0; i < GEMINI_KEYS.length; i++) {
+    try {
+      return await callGemini(messages, GEMINI_KEYS[i]);
+    } catch (err) {
+      lastErr = err;
+      if (i < GEMINI_KEYS.length - 1) steps.push(`Gemini key ${i + 1} failed (${err.message.slice(0, 80)}) — trying backup key ${i + 2}...`);
+    }
+  }
+  throw new Error(`All Groq and Gemini keys failed. Last error: ${lastErr.message}`);
 }
 
 // Runs one full task end to end: creates the task row, runs the manager
 // loop, updates the row with the result, and emails the user. Used for
 // both on-demand tasks and recurring scheduled tasks.
 async function runTask(supabase, { goal, fileText }) {
-  if (!API_KEY) {
+  if (GROQ_KEYS.length === 0) {
     throw new Error("GROQ_API_KEY is not set on the server. Add it in Netlify > Site configuration > Environment variables, then redeploy.");
   }
 
