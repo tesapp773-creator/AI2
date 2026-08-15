@@ -34,6 +34,15 @@ const {
   listScheduledTasks,
   cancelScheduledTask,
 } = require("./_tools");
+const {
+  launchBrowser,
+  navigate: browserNavigate,
+  clickElement,
+  fillField,
+  readPage,
+  takeScreenshot,
+  closeBrowser,
+} = require("./_browser");
 
 const MODEL = process.env.GROQ_MODEL || "openai/gpt-oss-120b";
 const API_KEY = process.env.GROQ_API_KEY;
@@ -58,12 +67,67 @@ const TOOLS = [
     type: "function",
     function: {
       name: "fetch_url",
-      description: "Fetch a web page and return its readable text content.",
+      description: "Fetch a web page and return its readable text content. Use this for simple reading — prefer this over browser_navigate unless you actually need to click, fill forms, or the page requires JavaScript to render.",
       parameters: {
         type: "object",
         properties: { url: { type: "string", description: "The URL to fetch." } },
         required: ["url"],
       },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "browser_navigate",
+      description: "Open a real browser and go to a URL — use this (not fetch_url) when you need to interact with a site: click things, fill in forms, or read a page that needs JavaScript. Returns the page title and a list of clickable/fillable elements, each with an id you can use with browser_click / browser_fill.",
+      parameters: {
+        type: "object",
+        properties: { url: { type: "string", description: "The URL to open." } },
+        required: ["url"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "browser_click",
+      description: "Click an element on the currently open page, by its id (from the elements list returned by browser_navigate or the previous browser action). Returns the updated page state after clicking.",
+      parameters: {
+        type: "object",
+        properties: { elementId: { type: "string", description: "The element's id, e.g. \"4\"." } },
+        required: ["elementId"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "browser_fill",
+      description: "Type text into an input/textarea on the currently open page, by its id.",
+      parameters: {
+        type: "object",
+        properties: {
+          elementId: { type: "string", description: "The element's id, e.g. \"2\"." },
+          text: { type: "string", description: "The text to type into it." },
+        },
+        required: ["elementId", "text"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "browser_read_page",
+      description: "Read the full visible text of the currently open page — use this to verify a result, e.g. after submitting a form, to confirm what actually happened.",
+      parameters: { type: "object", properties: {} },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "browser_screenshot",
+      description: "Take a screenshot of the currently open page and get back a URL to it. Use this to show the user what a page looks like, or as visual proof of a result.",
+      parameters: { type: "object", properties: {} },
     },
   },
   {
@@ -371,7 +435,7 @@ async function fetchPageText(url) {
   }
 }
 
-async function runTool(name, args, steps, supabase) {
+async function runTool(name, args, steps, supabase, browserSession) {
   try {
     switch (name) {
       case "search_web": {
@@ -381,6 +445,35 @@ async function runTool(name, args, steps, supabase) {
       case "fetch_url": {
         steps.push(`Fetching ${args.url} ...`);
         return await fetchPageText(args.url);
+      }
+      case "browser_navigate": {
+        steps.push(`Opening a browser and going to ${args.url}...`);
+        if (!browserSession.browser) {
+          const { browser, page } = await launchBrowser();
+          browserSession.browser = browser;
+          browserSession.page = page;
+        }
+        return await browserNavigate(browserSession.page, args.url);
+      }
+      case "browser_click": {
+        steps.push(`Clicking element ${args.elementId} on the page...`);
+        if (!browserSession.page) throw new Error("No browser page open yet — call browser_navigate first.");
+        return await clickElement(browserSession.page, args.elementId);
+      }
+      case "browser_fill": {
+        steps.push(`Filling element ${args.elementId}...`);
+        if (!browserSession.page) throw new Error("No browser page open yet — call browser_navigate first.");
+        return await fillField(browserSession.page, args.elementId, args.text);
+      }
+      case "browser_read_page": {
+        steps.push("Reading the current page...");
+        if (!browserSession.page) throw new Error("No browser page open yet — call browser_navigate first.");
+        return await readPage(browserSession.page);
+      }
+      case "browser_screenshot": {
+        steps.push("Taking a screenshot...");
+        if (!browserSession.page) throw new Error("No browser page open yet — call browser_navigate first.");
+        return await takeScreenshot(browserSession.page, supabase);
       }
       case "github_list_repos": {
         steps.push("Listing your GitHub repos...");
@@ -650,7 +743,7 @@ async function runTask(supabase, { goal, fileText }) {
   const memorySection = memoryFacts.length
     ? `\n\nThings you already know about the user from past tasks (use these, don't ask again if already answered here):\n- ${memoryFacts.join("\n- ")}`
     : "";
-  const systemPrompt = `You are MKDAI, a personal manager agent. You have real tools: search_web (search the live web for current info), fetch_url (read a specific web page), github_list_repos (list the user's repos), github_create_repo (create a brand-new repo), github_delete_repo (PERMANENTLY delete a repo — see strict rule below), github_write_file / github_create_pull_request / github_undo_last_commit (act on ANY of the user's GitHub repos, including undoing the last commit if the user explicitly asks — pass 'repo' as "owner/repo" when the user names one, using github_list_repos first if you're not sure of the exact spelling), netlify_deploy (trigger a deploy for the main site), netlify_create_site (create a brand-new Netlify site, optionally linked to a GitHub repo, and optionally with its own environment variables set — when envVars are given it waits for the real deploy result instead of assuming success), netlify_check_deploy_status (check whether a site's latest deploy actually succeeded, is building, or failed, with the real error if it failed), check_email (read/search the user's inbox), send_email (send an email on the user's behalf), check_calendar / create_calendar_event (view or create Google Calendar events), ai_delegate (hand a sub-task to another free AI model for deeper reasoning or coding — Groq by default, or Gemini if the user asks for it by name), save_memory / forget_memory / list_memory (manage durable facts about the user across tasks), and schedule_task / list_scheduled_tasks / cancel_scheduled_task (set up, view, or stop goals that run automatically on a recurring schedule — hourly, daily, or weekly — without the user asking again). Use tools when the user's goal actually requires an action or current information you don't have — prefer search_web for anything current (news, listings, facts) rather than guessing from memory. When a tool isn't configured (missing token) it will return an error — tell the user plainly which token is missing rather than pretending you did the action. When you create a Netlify site with envVars, or check a deploy status, report the actual deployStatus/state truthfully (e.g. "ready", "error", "building", "timed_out") — never tell the user a deploy succeeded unless the state is "ready". Once you have everything you need, reply with a clear, concrete final answer and no further tool calls. CRITICAL SAFETY RULE: repo deletion is the one action that always needs the user's explicit confirmation first, even though everything else runs without asking — never call github_delete_repo on a first request to delete something; ask for confirmation in your answer instead, and only delete once the user has clearly confirmed in their own words.${memorySection}`;
+  const systemPrompt = `You are MKDAI, a personal manager agent. You have real tools: search_web (search the live web for current info), fetch_url (read a specific web page), github_list_repos (list the user's repos), github_create_repo (create a brand-new repo), github_delete_repo (PERMANENTLY delete a repo — see strict rule below), github_write_file / github_create_pull_request / github_undo_last_commit (act on ANY of the user's GitHub repos, including undoing the last commit if the user explicitly asks — pass 'repo' as "owner/repo" when the user names one, using github_list_repos first if you're not sure of the exact spelling), netlify_deploy (trigger a deploy for the main site), netlify_create_site (create a brand-new Netlify site, optionally linked to a GitHub repo, and optionally with its own environment variables set — when envVars are given it waits for the real deploy result instead of assuming success), netlify_check_deploy_status (check whether a site's latest deploy actually succeeded, is building, or failed, with the real error if it failed), check_email (read/search the user's inbox), send_email (send an email on the user's behalf), check_calendar / create_calendar_event (view or create Google Calendar events), browser_navigate / browser_click / browser_fill / browser_read_page / browser_screenshot (control a real browser to interact with a website like a human — click, fill forms, read what's on the page, verify a result, or take a screenshot; prefer fetch_url for simple reading, use these only when you actually need to interact with a page or it needs JavaScript to load), ai_delegate (hand a sub-task to another free AI model for deeper reasoning or coding — Groq by default, or Gemini if the user asks for it by name), save_memory / forget_memory / list_memory (manage durable facts about the user across tasks), and schedule_task / list_scheduled_tasks / cancel_scheduled_task (set up, view, or stop goals that run automatically on a recurring schedule — hourly, daily, or weekly — without the user asking again). Use tools when the user's goal actually requires an action or current information you don't have — prefer search_web for anything current (news, listings, facts) rather than guessing from memory. When a tool isn't configured (missing token) it will return an error — tell the user plainly which token is missing rather than pretending you did the action. When you create a Netlify site with envVars, or check a deploy status, report the actual deployStatus/state truthfully (e.g. "ready", "error", "building", "timed_out") — never tell the user a deploy succeeded unless the state is "ready". Once you have everything you need, reply with a clear, concrete final answer and no further tool calls. CRITICAL SAFETY RULE: repo deletion is the one action that always needs the user's explicit confirmation first, even though everything else runs without asking — never call github_delete_repo on a first request to delete something; ask for confirmation in your answer instead, and only delete once the user has clearly confirmed in their own words.${memorySection}`;
 
   const userContent = fileText
     ? `${goal}\n\nAttached file content:\n${fileText.slice(0, 12000)}`
@@ -660,6 +753,12 @@ async function runTask(supabase, { goal, fileText }) {
     { role: "system", content: systemPrompt },
     { role: "user", content: userContent },
   ];
+
+  // Shared across all tool calls in this task, so browser_navigate ->
+  // browser_click -> browser_read_page etc. all act on the SAME open page.
+  // Always closed below, whether the task succeeds or fails, so no
+  // Chromium process is ever left running.
+  const browserSession = { browser: null, page: null };
 
   try {
     let finalAnswer = null;
@@ -679,7 +778,7 @@ async function runTask(supabase, { goal, fileText }) {
         } catch {
           // leave args empty if the model produced malformed JSON
         }
-        const result = await runTool(call.function.name, args, steps, supabase);
+        const result = await runTool(call.function.name, args, steps, supabase, browserSession);
         messages.push({
           role: "tool",
           tool_call_id: call.id,
@@ -709,6 +808,8 @@ async function runTask(supabase, { goal, fileText }) {
     await sendNotificationEmail({ goal, status: "error", error: err.message });
     await sendNotificationWhatsApp({ goal, status: "error", error: err.message });
     throw err;
+  } finally {
+    await closeBrowser(browserSession.browser);
   }
 }
 

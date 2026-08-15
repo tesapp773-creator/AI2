@@ -6,7 +6,8 @@ write to GitHub, open a pull request, trigger a Netlify deploy, or delegate
 a hard sub-task to a second, bigger AI model — then reports back with a
 clear answer, and emails you when it's done.
 
-## What this v7 does
+## What this v8 does
+- **Browser automation**: opens a real (headless) browser and can navigate to a site, click buttons, fill in forms, read what's on the page, and take a screenshot — for sites that plain fetching can't handle (JavaScript-heavy pages, things that need clicking/typing). No new keys needed — it's a heavier feature than the rest (a real browser process), so it may need some real-world tuning as you use it.
 - **GitHub undo**: "undo my last commit" moves the branch back to its parent commit — a real safety net now that it commits freely on its own.
 - **Google Calendar**: check upcoming events or create new ones, via your own Google login (needs a one-time OAuth setup, not just an API key — see below).
 - **WhatsApp notifications**: get a WhatsApp message (via Twilio's free sandbox) when a task finishes or fails, alongside or instead of email.
@@ -87,6 +88,9 @@ close the tab and check back later, or wait for the email. Try something
 concrete like: "Create a file called notes.md in the repo with today's date
 and commit it" to see the GitHub worker in action, or "search the web for
 today's top tech news" to see live search.
+
+## Known limitations
+- **Browser automation** doesn't yet support uploading or downloading files through the browser — navigate/click/fill/read/screenshot are supported; file transfer via the browser itself is a bigger addition for later if needed.
 
 ## Extending it later
 - Add more workers by adding a new function + tool entry in `netlify/functions/_tools.js` and `netlify/functions/agent-background.js`.
