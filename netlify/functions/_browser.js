@@ -9,11 +9,15 @@
 // first real use.
 
 async function launchBrowser() {
-  const chromiumModule = require("@sparticuz/chromium");
-  // This package ships as an ESM module wrapped for CJS — the actual
-  // chromium object (with .args, .executablePath(), etc.) is on .default.
+  // @sparticuz/chromium ships as a pure ES Module — require() works in some
+  // local Node setups but fails under Netlify's actual Lambda runtime with
+  // "require() of ES Module not supported". Dynamic import() works for
+  // both ESM and CJS packages, so it's the safe choice here regardless of
+  // how either package is packaged.
+  const chromiumModule = await import("@sparticuz/chromium");
   const chromium = chromiumModule.default || chromiumModule;
-  const puppeteer = require("puppeteer-core");
+  const puppeteerModule = await import("puppeteer-core");
+  const puppeteer = puppeteerModule.default || puppeteerModule;
   const executablePath = await chromium.executablePath();
   const browser = await puppeteer.launch({
     args: chromium.args,
