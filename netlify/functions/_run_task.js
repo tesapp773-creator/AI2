@@ -672,7 +672,18 @@ function geminiResponseToMessage(data) {
     return { role: "assistant", content: null, tool_calls };
   }
   const text = parts.map((p) => p.text || "").join("");
-  return { role: "assistant", content: text || "(no response)" };
+  if (text) return { role: "assistant", content: text };
+  // Empty output with no function call — surface WHY instead of a blank
+  // "(no response)" so it's actually debuggable (e.g. safety filtering,
+  // hitting max output tokens, or a genuinely empty turn).
+  const finishReason = candidate && candidate.finishReason;
+  const safetyBlocked = candidate && candidate.safetyRatings && candidate.safetyRatings.some((r) => r.blocked);
+  const reason = safetyBlocked
+    ? "Gemini's safety filter blocked this response."
+    : finishReason
+    ? `Gemini stopped without a full answer (reason: ${finishReason}).`
+    : "Gemini returned an empty response for an unknown reason.";
+  return { role: "assistant", content: `I wasn't able to finish this — ${reason} Try rephrasing the goal or breaking it into smaller steps.` };
 }
 
 async function callGemini(messages) {
