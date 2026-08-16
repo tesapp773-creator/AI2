@@ -38,7 +38,7 @@ async function summarizePage(page) {
     const interactive = Array.from(
       document.querySelectorAll("a, button, input, textarea, select, [role='button']")
     );
-    const elements = interactive.slice(0, 60).map((el, i) => {
+    const elements = interactive.slice(0, 150).map((el, i) => {
       el.setAttribute("data-mkdai-id", String(i));
       const tag = el.tagName.toLowerCase();
       const type = el.getAttribute("type") || "";
