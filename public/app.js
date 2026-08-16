@@ -29,6 +29,30 @@ async function fetchResults() {
   }
 }
 
+// Detects image URLs (screenshots, or any direct image link) within an
+// answer and renders them as actual images, not just clickable text.
+function renderAnswerWithImages(container, text) {
+  const urlRegex = /(https?:\/\/[^\s)]+\.(?:png|jpe?g|gif|webp))/gi;
+  let lastIndex = 0;
+  let match;
+  while ((match = urlRegex.exec(text)) !== null) {
+    const before = text.slice(lastIndex, match.index);
+    if (before) container.appendChild(document.createTextNode(before));
+    const img = document.createElement("img");
+    img.src = match[1];
+    img.alt = "Screenshot";
+    img.loading = "lazy";
+    img.style.maxWidth = "100%";
+    img.style.borderRadius = "8px";
+    img.style.margin = "8px 0";
+    img.style.display = "block";
+    container.appendChild(img);
+    lastIndex = match.index + match[1].length;
+  }
+  const rest = text.slice(lastIndex);
+  if (rest) container.appendChild(document.createTextNode(rest));
+}
+
 async function renderResults() {
   const results = await fetchResults();
   resultsList.innerHTML = "";
@@ -53,7 +77,7 @@ async function renderResults() {
     } else if (r.status === "running" || r.status === "pending") {
       answerEl.textContent = "Still working...";
     } else {
-      answerEl.textContent = r.answer;
+      renderAnswerWithImages(answerEl, r.answer || "");
     }
     card.appendChild(answerEl);
 

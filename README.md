@@ -6,7 +6,10 @@ write to GitHub, open a pull request, trigger a Netlify deploy, or delegate
 a hard sub-task to a second, bigger AI model — then reports back with a
 clear answer, and emails you when it's done.
 
-## What this v10 does
+## What this v11 does
+- **Image generation**: create an image from a text description (via Pollinations, completely free, no signup or key needed).
+- **Screenshots and generated images render as actual images** in the app now, not just links.
+- **Downloaded files auto-download** when clicked, instead of opening inline.
 - **Browser automation, now with file transfer**: opens a real (headless) browser and can navigate, click, fill forms, read pages, take screenshots, upload a file into a form (from a URL or attached text), and download a file from a page (saved and handed back as a URL). No new keys needed.
 - **Multi-key resilience**: add backup Groq and Gemini accounts (GROQ_API_KEY_2/_3, GEMINI_API_KEY_2/_3) and it automatically rotates to the next one when one hits a rate limit, instead of failing.
 - **Browser automation**: opens a real (headless) browser and can navigate to a site, click buttons, fill in forms, read what's on the page, and take a screenshot — for sites that plain fetching can't handle (JavaScript-heavy pages, things that need clicking/typing). No new keys needed — it's a heavier feature than the rest (a real browser process), so it may need some real-world tuning as you use it.

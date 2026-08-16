@@ -596,6 +596,27 @@ async function getGoogleAccessToken() {
 }
 
 // List upcoming events on the primary calendar (default: next 7 days).
+// Generate an image from a text prompt using Pollinations (completely
+// free, no signup or API key needed). The generated image is re-uploaded
+// to our own Supabase storage so the link stays stable and works the same
+// way as screenshots/downloads, rather than depending on an external URL.
+async function generateImage(supabase, { prompt, width = 1024, height = 1024 }) {
+  const encodedPrompt = encodeURIComponent(prompt);
+  const url = `https://gen.pollinations.ai/image/${encodedPrompt}?width=${width}&height=${height}&nologo=true`;
+  const res = await fetch(url);
+  if (!res.ok) {
+    throw new Error(`Image generation failed (${res.status}).`);
+  }
+  const buffer = Buffer.from(await res.arrayBuffer());
+  const fileName = `generated/${Date.now()}-${Math.random().toString(36).slice(2)}.png`;
+  const { error } = await supabase.storage
+    .from("mkdai-files")
+    .upload(fileName, buffer, { contentType: "image/png" });
+  if (error) throw new Error(`Generated the image but could not save it: ${error.message}`);
+  const { data } = supabase.storage.from("mkdai-files").getPublicUrl(fileName);
+  return { imageUrl: data.publicUrl, prompt };
+}
+
 async function checkCalendar({ timeMin, timeMax, maxResults = 15 }) {
   const accessToken = await getGoogleAccessToken();
   const now = new Date();
@@ -702,6 +723,7 @@ module.exports = {
   listAllMemory,
   checkCalendar,
   createCalendarEvent,
+  generateImage,
   scheduleTask,
   listScheduledTasks,
   cancelScheduledTask,

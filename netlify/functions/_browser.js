@@ -183,7 +183,9 @@ async function downloadFile(page, supabase, elementId) {
   const storagePath = `downloads/${Date.now()}-${finishedFile}`;
   const { error } = await supabase.storage.from("mkdai-files").upload(storagePath, buffer);
   if (error) throw new Error(`Downloaded the file but could not save it: ${error.message}`);
-  const { data } = supabase.storage.from("mkdai-files").getPublicUrl(storagePath);
+  const { data } = supabase.storage.from("mkdai-files").getPublicUrl(storagePath, {
+    download: finishedFile,
+  });
 
   fs.rmSync(downloadDir, { recursive: true, force: true });
   return { downloaded: true, fileName: finishedFile, fileUrl: data.publicUrl };
