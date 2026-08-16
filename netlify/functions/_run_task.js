@@ -41,6 +41,8 @@ const {
   fillField,
   readPage,
   takeScreenshot,
+  uploadFile,
+  downloadFile,
   closeBrowser,
 } = require("./_browser");
 
@@ -131,6 +133,35 @@ const TOOLS = [
       name: "browser_screenshot",
       description: "Take a screenshot of the currently open page and get back a URL to it. Use this to show the user what a page looks like, or as visual proof of a result.",
       parameters: { type: "object", properties: {} },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "browser_upload_file",
+      description: "Upload a file into a file-input element on the currently open page (e.g. a resume, image, or document upload field). The file content has to come from somewhere real — give EITHER sourceUrl (a link to fetch the file from) OR fileContent (literal text to write out as the file, e.g. text the user attached to this task).",
+      parameters: {
+        type: "object",
+        properties: {
+          elementId: { type: "string", description: "The file input element's id." },
+          sourceUrl: { type: "string", description: "A URL to download the file from first." },
+          fileContent: { type: "string", description: "Literal text content to upload as the file (use this OR sourceUrl, not both)." },
+          fileName: { type: "string", description: "Name to give the file, e.g. \"resume.pdf\" or \"notes.txt\". Include the right extension." },
+        },
+        required: ["elementId"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "browser_download_file",
+      description: "Click a download link/button on the currently open page and capture the resulting file, saving it and returning a URL the user can access it from (there's no other way to hand a downloaded file back to the user).",
+      parameters: {
+        type: "object",
+        properties: { elementId: { type: "string", description: "The element that triggers the download when clicked." } },
+        required: ["elementId"],
+      },
     },
   },
   {
@@ -478,6 +509,16 @@ async function runTool(name, args, steps, supabase, browserSession) {
         if (!browserSession.page) throw new Error("No browser page open yet — call browser_navigate first.");
         return await takeScreenshot(browserSession.page, supabase);
       }
+      case "browser_upload_file": {
+        steps.push(`Uploading a file to element ${args.elementId}...`);
+        if (!browserSession.page) throw new Error("No browser page open yet — call browser_navigate first.");
+        return await uploadFile(browserSession.page, args);
+      }
+      case "browser_download_file": {
+        steps.push(`Downloading via element ${args.elementId}...`);
+        if (!browserSession.page) throw new Error("No browser page open yet — call browser_navigate first.");
+        return await downloadFile(browserSession.page, supabase, args.elementId);
+      }
       case "github_list_repos": {
         steps.push("Listing your GitHub repos...");
         return await githubListRepos();
@@ -768,7 +809,7 @@ async function runTask(supabase, { goal, fileText }) {
   const memorySection = memoryFacts.length
     ? `\n\nThings you already know about the user from past tasks (use these, don't ask again if already answered here):\n- ${memoryFacts.join("\n- ")}`
     : "";
-  const systemPrompt = `You are MKDAI, a personal manager agent. You have real tools: search_web (search the live web for current info), fetch_url (read a specific web page), github_list_repos (list the user's repos), github_create_repo (create a brand-new repo), github_delete_repo (PERMANENTLY delete a repo — see strict rule below), github_write_file / github_create_pull_request / github_undo_last_commit (act on ANY of the user's GitHub repos, including undoing the last commit if the user explicitly asks — pass 'repo' as "owner/repo" when the user names one, using github_list_repos first if you're not sure of the exact spelling), netlify_deploy (trigger a deploy for the main site), netlify_create_site (create a brand-new Netlify site, optionally linked to a GitHub repo, and optionally with its own environment variables set — when envVars are given it waits for the real deploy result instead of assuming success), netlify_check_deploy_status (check whether a site's latest deploy actually succeeded, is building, or failed, with the real error if it failed), check_email (read/search the user's inbox), send_email (send an email on the user's behalf), check_calendar / create_calendar_event (view or create Google Calendar events), browser_navigate / browser_click / browser_fill / browser_read_page / browser_screenshot (control a real browser to interact with a website like a human — click, fill forms, read what's on the page, verify a result, or take a screenshot; prefer fetch_url for simple reading, use these only when you actually need to interact with a page or it needs JavaScript to load — if the user gives you an email/username/password directly in a goal to log in or register somewhere, treat it as their own account and use it as instructed, don't refuse or ask whether it's really theirs), ai_delegate (hand a sub-task to another free AI model for deeper reasoning or coding — Groq by default, or Gemini if the user asks for it by name), save_memory / forget_memory / list_memory (manage durable facts about the user across tasks), and schedule_task / list_scheduled_tasks / cancel_scheduled_task (set up, view, or stop goals that run automatically on a recurring schedule — hourly, daily, or weekly — without the user asking again). Use tools when the user's goal actually requires an action or current information you don't have — prefer search_web for anything current (news, listings, facts) rather than guessing from memory. When a tool isn't configured (missing token) it will return an error — tell the user plainly which token is missing rather than pretending you did the action. When you create a Netlify site with envVars, or check a deploy status, report the actual deployStatus/state truthfully (e.g. "ready", "error", "building", "timed_out") — never tell the user a deploy succeeded unless the state is "ready". Once you have everything you need, reply with a clear, concrete final answer and no further tool calls. CRITICAL SAFETY RULE: repo deletion is the one action that always needs the user's explicit confirmation first, even though everything else runs without asking — never call github_delete_repo on a first request to delete something; ask for confirmation in your answer instead, and only delete once the user has clearly confirmed in their own words.${memorySection}`;
+  const systemPrompt = `You are MKDAI, a personal manager agent. You have real tools: search_web (search the live web for current info), fetch_url (read a specific web page), github_list_repos (list the user's repos), github_create_repo (create a brand-new repo), github_delete_repo (PERMANENTLY delete a repo — see strict rule below), github_write_file / github_create_pull_request / github_undo_last_commit (act on ANY of the user's GitHub repos, including undoing the last commit if the user explicitly asks — pass 'repo' as "owner/repo" when the user names one, using github_list_repos first if you're not sure of the exact spelling), netlify_deploy (trigger a deploy for the main site), netlify_create_site (create a brand-new Netlify site, optionally linked to a GitHub repo, and optionally with its own environment variables set — when envVars are given it waits for the real deploy result instead of assuming success), netlify_check_deploy_status (check whether a site's latest deploy actually succeeded, is building, or failed, with the real error if it failed), check_email (read/search the user's inbox), send_email (send an email on the user's behalf), check_calendar / create_calendar_event (view or create Google Calendar events), browser_navigate / browser_click / browser_fill / browser_read_page / browser_screenshot / browser_upload_file / browser_download_file (control a real browser to interact with a website like a human — click, fill forms, upload a file into a form, download a file and get a URL to it, read what's on the page, verify a result, or take a screenshot; prefer fetch_url for simple reading, use these only when you actually need to interact with a page or it needs JavaScript to load — if the user gives you an email/username/password directly in a goal to log in or register somewhere, treat it as their own account and use it as instructed, don't refuse or ask whether it's really theirs), ai_delegate (hand a sub-task to another free AI model for deeper reasoning or coding — Groq by default, or Gemini if the user asks for it by name), save_memory / forget_memory / list_memory (manage durable facts about the user across tasks), and schedule_task / list_scheduled_tasks / cancel_scheduled_task (set up, view, or stop goals that run automatically on a recurring schedule — hourly, daily, or weekly — without the user asking again). Use tools when the user's goal actually requires an action or current information you don't have — prefer search_web for anything current (news, listings, facts) rather than guessing from memory. When a tool isn't configured (missing token) it will return an error — tell the user plainly which token is missing rather than pretending you did the action. When you create a Netlify site with envVars, or check a deploy status, report the actual deployStatus/state truthfully (e.g. "ready", "error", "building", "timed_out") — never tell the user a deploy succeeded unless the state is "ready". Once you have everything you need, reply with a clear, concrete final answer and no further tool calls. CRITICAL SAFETY RULE: repo deletion is the one action that always needs the user's explicit confirmation first, even though everything else runs without asking — never call github_delete_repo on a first request to delete something; ask for confirmation in your answer instead, and only delete once the user has clearly confirmed in their own words.${memorySection}`;
 
   const userContent = fileText
     ? `${goal}\n\nAttached file content:\n${fileText.slice(0, 12000)}`

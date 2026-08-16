@@ -6,7 +6,8 @@ write to GitHub, open a pull request, trigger a Netlify deploy, or delegate
 a hard sub-task to a second, bigger AI model — then reports back with a
 clear answer, and emails you when it's done.
 
-## What this v9 does
+## What this v10 does
+- **Browser automation, now with file transfer**: opens a real (headless) browser and can navigate, click, fill forms, read pages, take screenshots, upload a file into a form (from a URL or attached text), and download a file from a page (saved and handed back as a URL). No new keys needed.
 - **Multi-key resilience**: add backup Groq and Gemini accounts (GROQ_API_KEY_2/_3, GEMINI_API_KEY_2/_3) and it automatically rotates to the next one when one hits a rate limit, instead of failing.
 - **Browser automation**: opens a real (headless) browser and can navigate to a site, click buttons, fill in forms, read what's on the page, and take a screenshot — for sites that plain fetching can't handle (JavaScript-heavy pages, things that need clicking/typing). No new keys needed — it's a heavier feature than the rest (a real browser process), so it may need some real-world tuning as you use it.
 - **GitHub undo**: "undo my last commit" moves the branch back to its parent commit — a real safety net now that it commits freely on its own.
@@ -93,7 +94,7 @@ and commit it" to see the GitHub worker in action, or "search the web for
 today's top tech news" to see live search.
 
 ## Known limitations
-- **Browser automation** doesn't yet support uploading or downloading files through the browser — navigate/click/fill/read/screenshot are supported; file transfer via the browser itself is a bigger addition for later if needed.
+- Nothing major right now — see the README history in git log for what's been added over time.
 
 ## Extending it later
 - Add more workers by adding a new function + tool entry in `netlify/functions/_tools.js` and `netlify/functions/agent-background.js`.
