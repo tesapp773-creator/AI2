@@ -602,7 +602,7 @@ async function getGoogleAccessToken() {
 // way as screenshots/downloads, rather than depending on an external URL.
 async function generateImage(supabase, { prompt, width = 1024, height = 1024 }) {
   const encodedPrompt = encodeURIComponent(prompt);
-  const url = `https://gen.pollinations.ai/image/${encodedPrompt}?width=${width}&height=${height}&nologo=true`;
+  const url = `https://image.pollinations.ai/prompt/${encodedPrompt}?width=${width}&height=${height}&nologo=true`;
   const res = await fetch(url);
   if (!res.ok) {
     throw new Error(`Image generation failed (${res.status}).`);
