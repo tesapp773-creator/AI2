@@ -813,6 +813,21 @@ async function callModel(messages, steps) {
   throw new Error(`All Groq and Gemini keys failed. Last error: ${lastErr.message}`);
 }
 
+// Keeps token usage roughly flat across a long task instead of compounding
+// every turn — see the comment where this is called for why it matters.
+function trimOldToolResults(messages, keepRecent = 4) {
+  const toolIndices = [];
+  for (let i = 0; i < messages.length; i++) {
+    if (messages[i].role === "tool") toolIndices.push(i);
+  }
+  const toTrim = toolIndices.slice(0, Math.max(0, toolIndices.length - keepRecent));
+  for (const i of toTrim) {
+    if (messages[i].content.length > 150) {
+      messages[i].content = "[earlier tool result omitted to save context space — re-run the tool if you need this again]";
+    }
+  }
+}
+
 // Runs one full task end to end: creates the task row, runs the manager
 // loop, updates the row with the result, and emails the user. Used for
 // both on-demand tasks and recurring scheduled tasks.
@@ -869,9 +884,18 @@ async function runTask(supabase, { goal, fileText }) {
         messages.push({
           role: "tool",
           tool_call_id: call.id,
-          content: JSON.stringify(result).slice(0, 4000),
+          content: JSON.stringify(result).slice(0, 2500),
         });
       }
+
+      // Every turn resends the ENTIRE conversation so far — on long,
+      // multi-step tasks (browser automation especially, with full page
+      // dumps and element lists each step) that grows very expensive very
+      // fast. Trimming older tool results down to a placeholder once a few
+      // newer turns exist keeps token usage roughly flat instead of
+      // compounding, which is what actually makes a limited free-tier
+      // quota stretch across a whole task.
+      trimOldToolResults(messages);
     }
 
     if (finalAnswer === null) {
