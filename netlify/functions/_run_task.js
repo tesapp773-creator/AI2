@@ -486,6 +486,21 @@ async function fetchPageText(url) {
   }
 }
 
+// Takes a screenshot and logs its URL directly into the live steps feed —
+// this is separate from the model's own context (steps aren't resent to
+// the AI), so it adds zero token cost but lets the app show what the
+// browser is actually seeing as it goes, not just after the fact.
+// Best-effort: a failed screenshot should never break the task.
+async function snapshotStep(page, supabase, steps) {
+  try {
+    const { screenshotUrl } = await takeScreenshot(page, supabase);
+    steps.push(screenshotUrl);
+  } catch {
+    // Screenshot capture is a nice-to-have for live progress, not
+    // essential — silently skip on failure.
+  }
+}
+
 async function runTool(name, args, steps, supabase, browserSession) {
   try {
     switch (name) {
@@ -504,12 +519,16 @@ async function runTool(name, args, steps, supabase, browserSession) {
           browserSession.browser = browser;
           browserSession.page = page;
         }
-        return await browserNavigate(browserSession.page, args.url);
+        const navResult = await browserNavigate(browserSession.page, args.url);
+        await snapshotStep(browserSession.page, supabase, steps);
+        return navResult;
       }
       case "browser_click": {
         steps.push(`Clicking element ${args.elementId} on the page...`);
         if (!browserSession.page) throw new Error("No browser page open yet — call browser_navigate first.");
-        return await clickElement(browserSession.page, args.elementId);
+        const clickResult = await clickElement(browserSession.page, args.elementId);
+        await snapshotStep(browserSession.page, supabase, steps);
+        return clickResult;
       }
       case "browser_fill": {
         steps.push(`Filling element ${args.elementId}...`);
@@ -896,6 +915,16 @@ async function runTask(supabase, { goal, fileText }) {
       // compounding, which is what actually makes a limited free-tier
       // quota stretch across a whole task.
       trimOldToolResults(messages);
+
+      // Save progress after every turn (not just at the end) so the app
+      // can show what's actually happening live instead of a static
+      // "Still working..." message. Best-effort — a failed progress write
+      // should never break the task itself.
+      await supabase
+        .from("mkdai_tasks")
+        .update({ steps, updated_at: new Date().toISOString() })
+        .eq("id", taskId)
+        .then(null, () => {});
     }
 
     if (finalAnswer === null) {

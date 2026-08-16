@@ -9,12 +9,16 @@
 <body>
   <div class="app">
     <header>
+      <div class="logo-mark">✦</div>
       <h1>MKDAI</h1>
-      <p class="tagline">Tell it what you want done. It searches, reads, and summarizes for you.</p>
     </header>
+    <p class="tagline">Tell it what you want done. It searches, reads, browses, and acts for you.</p>
 
     <section class="composer">
-      <textarea id="goalInput" placeholder="e.g. Find remote frontend developer jobs posted this week and list the best 5 with links&#10;e.g. https://example.com/article — summarize this&#10;e.g. Attach a file below and ask me to summarize it"></textarea>
+      <div class="composer-row">
+        <textarea id="goalInput" placeholder="e.g. Find remote frontend developer jobs posted this week and list the best 5 with links&#10;e.g. https://example.com/article — summarize this&#10;e.g. Attach a file below and ask me to summarize it"></textarea>
+        <button id="micBtn" title="Speak your goal">🎤</button>
+      </div>
 
       <div class="file-row">
         <label for="fileInput" class="file-label">📎 Attach a file (optional)</label>

@@ -2,11 +2,63 @@ const goalInput = document.getElementById("goalInput");
 const fileInput = document.getElementById("fileInput");
 const fileNameEl = document.getElementById("fileName");
 const runBtn = document.getElementById("runBtn");
+const micBtn = document.getElementById("micBtn");
 const statusEl = document.getElementById("status");
 const stepsList = document.getElementById("stepsList");
 const resultsList = document.getElementById("resultsList");
 
 let attachedFileText = "";
+
+// Voice input — uses the browser's built-in speech recognition (Chrome:
+// webkitSpeechRecognition). Completely free, no API key, works client-side.
+const SpeechRecognitionAPI = window.SpeechRecognition || window.webkitSpeechRecognition;
+let recognition = null;
+let isRecording = false;
+
+if (SpeechRecognitionAPI) {
+  recognition = new SpeechRecognitionAPI();
+  recognition.continuous = false;
+  recognition.interimResults = false;
+  recognition.lang = "en-US";
+
+  recognition.addEventListener("result", (e) => {
+    const transcript = e.results[0][0].transcript;
+    goalInput.value = goalInput.value ? `${goalInput.value} ${transcript}` : transcript;
+  });
+
+  recognition.addEventListener("end", () => {
+    isRecording = false;
+    micBtn.classList.remove("recording");
+  });
+
+  recognition.addEventListener("error", () => {
+    isRecording = false;
+    micBtn.classList.remove("recording");
+  });
+
+  micBtn.addEventListener("click", () => {
+    if (isRecording) {
+      recognition.stop();
+      return;
+    }
+    isRecording = true;
+    micBtn.classList.add("recording");
+    recognition.start();
+  });
+} else {
+  micBtn.style.display = "none";
+}
+
+// Voice output — the browser's built-in text-to-speech, same idea: free,
+// no key, works client-side. Strips markdown symbols so it doesn't read
+// asterisks/hashes aloud.
+function speakText(text) {
+  if (!window.speechSynthesis) return;
+  window.speechSynthesis.cancel();
+  const clean = text.replace(/[*_#`]/g, "").replace(/https?:\/\/\S+/g, "a link");
+  const utterance = new SpeechSynthesisUtterance(clean);
+  window.speechSynthesis.speak(utterance);
+}
 
 fileInput.addEventListener("change", async () => {
   const file = fileInput.files[0];
@@ -75,9 +127,33 @@ async function renderResults() {
     if (isError) {
       answerEl.textContent = `Error: ${r.error}`;
     } else if (r.status === "running" || r.status === "pending") {
-      answerEl.textContent = "Still working...";
+      const liveLabel = document.createElement("div");
+      liveLabel.className = "live-label";
+      liveLabel.textContent = "Working — live progress:";
+      answerEl.appendChild(liveLabel);
+      const liveSteps = document.createElement("div");
+      liveSteps.className = "live-steps";
+      const stepsSoFar = r.steps || [];
+      if (stepsSoFar.length === 0) {
+        liveSteps.textContent = "Starting...";
+      } else {
+        for (const s of stepsSoFar) {
+          const stepEl = document.createElement("div");
+          stepEl.className = "live-step";
+          renderAnswerWithImages(stepEl, s);
+          liveSteps.appendChild(stepEl);
+        }
+      }
+      answerEl.appendChild(liveSteps);
     } else {
       renderAnswerWithImages(answerEl, r.answer || "");
+      if (r.answer) {
+        const speakBtn = document.createElement("button");
+        speakBtn.className = "speak-btn";
+        speakBtn.textContent = "🔊 Read aloud";
+        speakBtn.addEventListener("click", () => speakText(r.answer));
+        answerEl.appendChild(speakBtn);
+      }
     }
     card.appendChild(answerEl);
 
@@ -131,8 +207,8 @@ async function runTask() {
     // Background function returns instantly and keeps working server-side.
     // Poll for a while so the UI updates once it's actually done.
     await renderResults();
-    for (let i = 0; i < 40; i++) {
-      await new Promise((r) => setTimeout(r, 3000));
+    for (let i = 0; i < 60; i++) {
+      await new Promise((r) => setTimeout(r, 2000));
       const results = await fetchResults();
       const stillRunning = results.some((r) => r.goal === goal && (r.status === "running" || r.status === "pending"));
       await renderResults();

@@ -10,7 +10,7 @@ exports.handler = async (event) => {
     const supabase = getClient();
     const { data, error } = await supabase
       .from("mkdai_tasks")
-      .select("id, goal, status, answer, sources, error, created_at")
+      .select("id, goal, status, answer, sources, error, steps, created_at")
       .order("created_at", { ascending: false })
       .limit(50);
     if (error) throw error;
