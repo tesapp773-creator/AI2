@@ -975,6 +975,23 @@ async function runTask(supabase, { goal, fileText, conversationId }) {
         .update({ steps, updated_at: new Date().toISOString() })
         .eq("id", taskId)
         .then(null, () => {});
+
+      // Background functions can't be force-killed from outside, so
+      // cancellation is cooperative: the app sets cancel_requested, and
+      // the task checks it between turns and stops itself cleanly.
+      const { data: cancelCheck } = await supabase
+        .from("mkdai_tasks")
+        .select("cancel_requested")
+        .eq("id", taskId)
+        .single();
+      if (cancelCheck && cancelCheck.cancel_requested) {
+        steps.push("Stopped by user request.");
+        await supabase
+          .from("mkdai_tasks")
+          .update({ status: "cancelled", answer: "Stopped before finishing, at your request.", steps, updated_at: new Date().toISOString() })
+          .eq("id", taskId);
+        return { id: taskId, conversationId: convoId, answer: "Stopped before finishing, at your request.", sources: [], steps };
+      }
     }
 
     if (finalAnswer === null) {

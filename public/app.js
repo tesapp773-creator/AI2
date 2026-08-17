@@ -272,6 +272,23 @@ async function renderResults() {
         }
       }
       answerEl.appendChild(liveSteps);
+      const stopBtn = document.createElement("button");
+      stopBtn.className = "speak-btn";
+      stopBtn.textContent = "⏹ Stop";
+      stopBtn.addEventListener("click", async () => {
+        stopBtn.disabled = true;
+        stopBtn.textContent = "Stopping...";
+        try {
+          await fetch("/api/cancel-task", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ taskId: r.id }),
+          });
+        } catch {
+          // best-effort — the running task will pick this up shortly regardless
+        }
+      });
+      answerEl.appendChild(stopBtn);
     } else {
       renderAnswerWithImages(answerEl, r.answer || "");
       if (r.answer) {
@@ -281,6 +298,16 @@ async function renderResults() {
         speakBtn.addEventListener("click", () => speakText(r.answer));
         answerEl.appendChild(speakBtn);
       }
+    }
+    if (isError) {
+      const retryBtn = document.createElement("button");
+      retryBtn.className = "speak-btn";
+      retryBtn.textContent = "🔁 Retry";
+      retryBtn.addEventListener("click", () => {
+        goalInput.value = r.goal;
+        runTask();
+      });
+      answerEl.appendChild(retryBtn);
     }
     card.appendChild(answerEl);
 
