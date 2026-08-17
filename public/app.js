@@ -7,10 +7,134 @@ const statusEl = document.getElementById("status");
 const stepsList = document.getElementById("stepsList");
 const resultsList = document.getElementById("resultsList");
 
+const sidebar = document.getElementById("sidebar");
+const backdrop = document.getElementById("backdrop");
+const menuBtn = document.getElementById("menuBtn");
+const newChatBtn = document.getElementById("newChatBtn");
+const dashboardNavBtn = document.getElementById("dashboardNavBtn");
+const convoList = document.getElementById("convoList");
+const chatView = document.getElementById("chatView");
+const dashboardView = document.getElementById("dashboardView");
+const statCards = document.getElementById("statCards");
+const integrationList = document.getElementById("integrationList");
+
 let attachedFileText = "";
 
-// Voice input — uses the browser's built-in speech recognition (Chrome:
-// webkitSpeechRecognition). Completely free, no API key, works client-side.
+// The active conversation thread. null = "new chat" — a fresh id is
+// generated client-side the moment the first message in it is sent. Kept
+// in localStorage (a real deployed website, not a sandboxed Claude
+// artifact, so ordinary browser storage is fine here) so refreshing the
+// page keeps you in the same thread.
+let currentConversationId = localStorage.getItem("mkdai_conversation_id") || null;
+
+function setConversation(id) {
+  currentConversationId = id;
+  if (id) localStorage.setItem("mkdai_conversation_id", id);
+  else localStorage.removeItem("mkdai_conversation_id");
+}
+
+// ---- Sidebar ----
+
+function openSidebar() {
+  sidebar.classList.add("open");
+  backdrop.classList.add("open");
+}
+function closeSidebar() {
+  sidebar.classList.remove("open");
+  backdrop.classList.remove("open");
+}
+menuBtn.addEventListener("click", openSidebar);
+backdrop.addEventListener("click", closeSidebar);
+
+async function loadConversations() {
+  try {
+    const res = await fetch("/api/conversations");
+    const data = await res.json();
+    const conversations = data.conversations || [];
+    convoList.innerHTML = "";
+    for (const c of conversations) {
+      const item = document.createElement("div");
+      item.className = "convo-item" + (c.id === currentConversationId ? " active" : "");
+      item.textContent = c.title || "Untitled";
+      item.addEventListener("click", () => {
+        setConversation(c.id);
+        showChatView();
+        closeSidebar();
+        renderResults();
+        loadConversations();
+      });
+      convoList.appendChild(item);
+    }
+  } catch {
+    // Sidebar list is a nice-to-have; fail silently if it can't load.
+  }
+}
+
+newChatBtn.addEventListener("click", () => {
+  setConversation(null);
+  resultsList.innerHTML = "";
+  goalInput.value = "";
+  showChatView();
+  closeSidebar();
+  renderResults();
+  loadConversations();
+});
+
+// ---- View switching (chat vs dashboard) ----
+
+function showChatView() {
+  chatView.classList.remove("hidden");
+  dashboardView.classList.add("hidden");
+  dashboardNavBtn.classList.remove("active");
+}
+
+async function showDashboardView() {
+  chatView.classList.add("hidden");
+  dashboardView.classList.remove("hidden");
+  dashboardNavBtn.classList.add("active");
+  closeSidebar();
+  await loadDashboard();
+}
+
+dashboardNavBtn.addEventListener("click", showDashboardView);
+
+async function loadDashboard() {
+  statCards.innerHTML = "Loading...";
+  integrationList.innerHTML = "";
+  try {
+    const res = await fetch("/api/dashboard");
+    const data = await res.json();
+    statCards.innerHTML = "";
+    const stats = data.stats || {};
+    const cards = [
+      ["Tasks today", stats.tasksToday],
+      ["Total tasks", stats.totalTasks],
+      ["Active schedules", stats.activeScheduled],
+      ["Memory facts", stats.memoryFacts],
+      ["Conversations", stats.conversations],
+      ["Backup Groq keys", (data.backupKeys && data.backupKeys.groq) || 0],
+      ["Backup Gemini keys", (data.backupKeys && data.backupKeys.gemini) || 0],
+    ];
+    for (const [label, num] of cards) {
+      const card = document.createElement("div");
+      card.className = "stat-card";
+      card.innerHTML = `<div class="num">${num ?? "–"}</div><div class="label">${label}</div>`;
+      statCards.appendChild(card);
+    }
+    for (const [name, on] of Object.entries(data.integrations || {})) {
+      const row = document.createElement("div");
+      row.className = "integration-row";
+      row.innerHTML = `<span>${name}</span><span class="integration-status ${on ? "on" : "off"}">${on ? "Connected" : "Not set up"}</span>`;
+      integrationList.appendChild(row);
+    }
+  } catch (err) {
+    statCards.innerHTML = `<p style="color:var(--bad); font-size:13px;">Could not load dashboard: ${err.message}</p>`;
+  }
+}
+
+// ---- Voice input — uses the browser's built-in speech recognition
+// (Chrome: webkitSpeechRecognition). Completely free, no API key, works
+// client-side. ----
 const SpeechRecognitionAPI = window.SpeechRecognition || window.webkitSpeechRecognition;
 let recognition = null;
 let isRecording = false;
@@ -72,8 +196,9 @@ fileInput.addEventListener("change", async () => {
 });
 
 async function fetchResults() {
+  if (!currentConversationId) return [];
   try {
-    const res = await fetch("/api/tasks");
+    const res = await fetch(`/api/tasks?conversationId=${encodeURIComponent(currentConversationId)}`);
     const data = await res.json();
     return data.tasks || [];
   } catch {
@@ -109,10 +234,12 @@ async function renderResults() {
   const results = await fetchResults();
   resultsList.innerHTML = "";
   if (results.length === 0) {
-    resultsList.innerHTML = '<p style="color:var(--muted); font-size:13px;">Nothing yet — run a task above.</p>';
+    resultsList.innerHTML = '<p style="color:var(--muted); font-size:13px;">Nothing yet — start a new chat above.</p>';
     return;
   }
-  for (const r of results) {
+  // Oldest first within a thread, like a normal chat.
+  const ordered = [...results].reverse();
+  for (const r of ordered) {
     const card = document.createElement("div");
     const isError = r.status === "error";
     card.className = "result-card" + (isError ? " error" : "");
@@ -179,6 +306,7 @@ async function renderResults() {
 
     resultsList.appendChild(card);
   }
+  resultsList.scrollTop = resultsList.scrollHeight;
 }
 
 function setSteps(steps) {
@@ -194,6 +322,12 @@ async function runTask() {
   const goal = goalInput.value.trim();
   if (!goal) return;
 
+  // First message in a "new chat" gets its own thread id right away —
+  // needed up front since the background function can't hand one back.
+  if (!currentConversationId) {
+    setConversation(crypto.randomUUID());
+  }
+
   runBtn.disabled = true;
   statusEl.classList.remove("hidden");
   setSteps(["Starting... (this now runs in the background — you can even close this tab, and you'll get an email when it's done if notifications are set up)"]);
@@ -202,7 +336,7 @@ async function runTask() {
     await fetch("/api/agent", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ goal, fileText: attachedFileText }),
+      body: JSON.stringify({ goal, fileText: attachedFileText, conversationId: currentConversationId }),
     });
     // Background function returns instantly and keeps working server-side.
     // Poll for a while so the UI updates once it's actually done.
@@ -214,6 +348,7 @@ async function runTask() {
       await renderResults();
       if (!stillRunning) break;
     }
+    loadConversations();
   } catch {
     // Network-level failure before the request could even be sent.
   } finally {
@@ -232,4 +367,5 @@ goalInput.addEventListener("keydown", (e) => {
   if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) runTask();
 });
 
+loadConversations();
 renderResults();

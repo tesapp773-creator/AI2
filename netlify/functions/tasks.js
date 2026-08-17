@@ -8,11 +8,16 @@ exports.handler = async (event) => {
 
   try {
     const supabase = getClient();
-    const { data, error } = await supabase
+    const conversationId = event.queryStringParameters && event.queryStringParameters.conversationId;
+    let query = supabase
       .from("mkdai_tasks")
-      .select("id, goal, status, answer, sources, error, steps, created_at")
+      .select("id, goal, status, answer, sources, error, steps, conversation_id, created_at")
       .order("created_at", { ascending: false })
-      .limit(50);
+      .limit(conversationId ? 200 : 50);
+    if (conversationId) {
+      query = query.eq("conversation_id", conversationId);
+    }
+    const { data, error } = await query;
     if (error) throw error;
     return { statusCode: 200, body: JSON.stringify({ tasks: data }) };
   } catch (err) {

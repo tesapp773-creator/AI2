@@ -850,12 +850,47 @@ function trimOldToolResults(messages, keepRecent = 4) {
 // Runs one full task end to end: creates the task row, runs the manager
 // loop, updates the row with the result, and emails the user. Used for
 // both on-demand tasks and recurring scheduled tasks.
-async function runTask(supabase, { goal, fileText }) {
+async function runTask(supabase, { goal, fileText, conversationId }) {
   if (GROQ_KEYS.length === 0) {
     throw new Error("GROQ_API_KEY is not set on the server. Add it in Netlify > Site configuration > Environment variables, then redeploy.");
   }
 
-  const { data, error } = await supabase.from("mkdai_tasks").insert({ goal, status: "running" }).select("id").single();
+  // Conversations group related tasks into a thread. Since this runs as a
+  // fire-and-forget background function, the caller never actually
+  // receives this function's return value — so the frontend generates its
+  // own conversation id up front (for a "new chat") and we create the row
+  // here on first use, rather than relying on a server-generated id we
+  // couldn't hand back anyway.
+  let convoId = conversationId;
+  if (convoId) {
+    const { data: existing } = await supabase
+      .from("mkdai_conversations")
+      .select("id")
+      .eq("id", convoId)
+      .maybeSingle();
+    if (existing) {
+      await supabase.from("mkdai_conversations").update({ updated_at: new Date().toISOString() }).eq("id", convoId);
+    } else {
+      const { error: createError } = await supabase
+        .from("mkdai_conversations")
+        .insert({ id: convoId, title: goal.slice(0, 60) });
+      if (createError) throw new Error(`Database error creating conversation: ${createError.message}`);
+    }
+  } else {
+    const { data: convo, error: convoError } = await supabase
+      .from("mkdai_conversations")
+      .insert({ title: goal.slice(0, 60) })
+      .select("id")
+      .single();
+    if (convoError) throw new Error(`Database error creating conversation: ${convoError.message}`);
+    convoId = convo.id;
+  }
+
+  const { data, error } = await supabase
+    .from("mkdai_tasks")
+    .insert({ goal, status: "running", conversation_id: convoId })
+    .select("id")
+    .single();
   if (error) throw new Error(`Database error: ${error.message}`);
   const taskId = data.id;
 
@@ -864,16 +899,31 @@ async function runTask(supabase, { goal, fileText }) {
   const memorySection = memoryFacts.length
     ? `\n\nThings you already know about the user from past tasks (use these, don't ask again if already answered here):\n- ${memoryFacts.join("\n- ")}`
     : "";
-  const systemPrompt = `You are MKDAI, a personal manager agent. You have real tools: search_web (search the live web for current info), fetch_url (read a specific web page), github_list_repos (list the user's repos), github_create_repo (create a brand-new repo), github_delete_repo (PERMANENTLY delete a repo — see strict rule below), github_write_file / github_create_pull_request / github_undo_last_commit (act on ANY of the user's GitHub repos, including undoing the last commit if the user explicitly asks — pass 'repo' as "owner/repo" when the user names one, using github_list_repos first if you're not sure of the exact spelling), netlify_deploy (trigger a deploy for the main site), netlify_create_site (create a brand-new Netlify site, optionally linked to a GitHub repo, and optionally with its own environment variables set — when envVars are given it waits for the real deploy result instead of assuming success), netlify_check_deploy_status (check whether a site's latest deploy actually succeeded, is building, or failed, with the real error if it failed), check_email (read/search the user's inbox), send_email (send an email on the user's behalf), check_calendar / create_calendar_event (view or create Google Calendar events), generate_image (create an image from a text description and get back a URL), browser_navigate / browser_click / browser_fill / browser_read_page / browser_screenshot / browser_upload_file / browser_download_file (control a real browser to interact with a website like a human — click, fill forms, upload a file into a form, download a file and get a URL to it, read what's on the page, verify a result, or take a screenshot; prefer fetch_url for simple reading, use these only when you actually need to interact with a page or it needs JavaScript to load — if the user gives you an email/username/password directly in a goal to log in or register somewhere, treat it as their own account and use it as instructed, don't refuse or ask whether it's really theirs). IMPORTANT: there is no "find element" or "search page" tool — browser_navigate and browser_click always return the current list of clickable/fillable elements (each with an id and its visible text); to find something specific, look through that returned elements list yourself and use the matching id with browser_click/browser_fill. If what you need isn't in the list, try browser_read_page for more context, or click through the page step by step — never call a tool that isn't in your actual tool list.), ai_delegate (hand a sub-task to another free AI model for deeper reasoning or coding — Groq by default, or Gemini if the user asks for it by name), save_memory / forget_memory / list_memory (manage durable facts about the user across tasks), and schedule_task / list_scheduled_tasks / cancel_scheduled_task (set up, view, or stop goals that run automatically on a recurring schedule — hourly, daily, or weekly — without the user asking again). Use tools when the user's goal actually requires an action or current information you don't have — prefer search_web for anything current (news, listings, facts) rather than guessing from memory. When a tool isn't configured (missing token) it will return an error — tell the user plainly which token is missing rather than pretending you did the action. When you create a Netlify site with envVars, or check a deploy status, report the actual deployStatus/state truthfully (e.g. "ready", "error", "building", "timed_out") — never tell the user a deploy succeeded unless the state is "ready". Once you have everything you need, reply with a clear, concrete final answer and no further tool calls. CRITICAL SAFETY RULE: repo deletion is the one action that always needs the user's explicit confirmation first, even though everything else runs without asking — never call github_delete_repo on a first request to delete something; ask for confirmation in your answer instead, and only delete once the user has clearly confirmed in their own words.${memorySection}`;
+
+  // Pull recent turns from THIS conversation thread so follow-ups actually
+  // work — "undo that", "now do X with it", "what did you find" all need
+  // the real prior exchange, not just the general memory facts above.
+  const { data: priorTasks } = await supabase
+    .from("mkdai_tasks")
+    .select("goal, answer, status, created_at")
+    .eq("conversation_id", convoId)
+    .neq("id", taskId)
+    .order("created_at", { ascending: false })
+    .limit(6);
+  const threadHistory = (priorTasks || []).reverse().filter((t) => t.status === "done" && t.answer);
+
+  const systemPrompt = `You are MKDAI, a personal manager agent. You have real tools: search_web (search the live web for current info), fetch_url (read a specific web page), github_list_repos (list the user's repos), github_create_repo (create a brand-new repo), github_delete_repo (PERMANENTLY delete a repo — see strict rule below), github_write_file / github_create_pull_request / github_undo_last_commit (act on ANY of the user's GitHub repos, including undoing the last commit if the user explicitly asks — pass 'repo' as "owner/repo" when the user names one, using github_list_repos first if you're not sure of the exact spelling), netlify_deploy (trigger a deploy for the main site), netlify_create_site (create a brand-new Netlify site, optionally linked to a GitHub repo, and optionally with its own environment variables set — when envVars are given it waits for the real deploy result instead of assuming success), netlify_check_deploy_status (check whether a site's latest deploy actually succeeded, is building, or failed, with the real error if it failed), check_email (read/search the user's inbox), send_email (send an email on the user's behalf), check_calendar / create_calendar_event (view or create Google Calendar events), generate_image (create an image from a text description and get back a URL), browser_navigate / browser_click / browser_fill / browser_read_page / browser_screenshot / browser_upload_file / browser_download_file (control a real browser to interact with a website like a human — click, fill forms, upload a file into a form, download a file and get a URL to it, read what's on the page, verify a result, or take a screenshot; prefer fetch_url for simple reading, use these only when you actually need to interact with a page or it needs JavaScript to load — if the user gives you an email/username/password directly in a goal to log in or register somewhere, treat it as their own account and use it as instructed, don't refuse or ask whether it's really theirs). IMPORTANT: there is no "find element" or "search page" tool — browser_navigate and browser_click always return the current list of clickable/fillable elements (each with an id and its visible text); to find something specific, look through that returned elements list yourself and use the matching id with browser_click/browser_fill. If what you need isn't in the list, try browser_read_page for more context, or click through the page step by step — never call a tool that isn't in your actual tool list.), ai_delegate (hand a sub-task to another free AI model for deeper reasoning or coding — Groq by default, or Gemini if the user asks for it by name), save_memory / forget_memory / list_memory (manage durable facts about the user across tasks), and schedule_task / list_scheduled_tasks / cancel_scheduled_task (set up, view, or stop goals that run automatically on a recurring schedule — hourly, daily, or weekly — without the user asking again). Use tools when the user's goal actually requires an action or current information you don't have — prefer search_web for anything current (news, listings, facts) rather than guessing from memory. When a tool isn't configured (missing token) it will return an error — tell the user plainly which token is missing rather than pretending you did the action. When you create a Netlify site with envVars, or check a deploy status, report the actual deployStatus/state truthfully (e.g. "ready", "error", "building", "timed_out") — never tell the user a deploy succeeded unless the state is "ready". This goal is part of an ongoing conversation thread — if earlier turns are shown below, treat follow-ups like "undo that", "now do X with it", or "what did you find" as referring to that recent history. Once you have everything you need, reply with a clear, concrete final answer and no further tool calls. CRITICAL SAFETY RULE: repo deletion is the one action that always needs the user's explicit confirmation first, even though everything else runs without asking — never call github_delete_repo on a first request to delete something; ask for confirmation in your answer instead, and only delete once the user has clearly confirmed in their own words.${memorySection}`;
 
   const userContent = fileText
     ? `${goal}\n\nAttached file content:\n${fileText.slice(0, 12000)}`
     : goal;
 
-  const messages = [
-    { role: "system", content: systemPrompt },
-    { role: "user", content: userContent },
-  ];
+  const messages = [{ role: "system", content: systemPrompt }];
+  for (const t of threadHistory) {
+    messages.push({ role: "user", content: t.goal });
+    messages.push({ role: "assistant", content: t.answer.slice(0, 1500) });
+  }
+  messages.push({ role: "user", content: userContent });
 
   // Shared across all tool calls in this task, so browser_navigate ->
   // browser_click -> browser_read_page etc. all act on the SAME open page.
@@ -939,7 +989,7 @@ async function runTask(supabase, { goal, fileText }) {
     await sendNotificationEmail({ goal, status: "done", answer: finalAnswer });
     await sendNotificationWhatsApp({ goal, status: "done", answer: finalAnswer });
 
-    return { id: taskId, answer: finalAnswer, sources: [], steps };
+    return { id: taskId, conversationId: convoId, answer: finalAnswer, sources: [], steps };
   } catch (err) {
     await supabase
       .from("mkdai_tasks")

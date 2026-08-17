@@ -7,37 +7,64 @@
 <link rel="stylesheet" href="style.css" />
 </head>
 <body>
+  <div class="backdrop" id="backdrop"></div>
+
+  <aside class="sidebar" id="sidebar">
+    <div class="sidebar-header">
+      <div class="logo-mark small">✦</div>
+      <span>MKDAI</span>
+    </div>
+    <button id="newChatBtn" class="new-chat-btn">+ New chat</button>
+    <nav class="nav-links">
+      <button id="dashboardNavBtn" class="nav-link">📊 Dashboard</button>
+    </nav>
+    <div class="convo-list-label">Conversations</div>
+    <div id="convoList" class="convo-list"></div>
+  </aside>
+
   <div class="app">
     <header>
+      <button id="menuBtn" class="menu-btn" title="Menu">☰</button>
       <div class="logo-mark">✦</div>
       <h1>MKDAI</h1>
     </header>
     <p class="tagline">Tell it what you want done. It searches, reads, browses, and acts for you.</p>
 
-    <section class="composer">
-      <div class="composer-row">
-        <textarea id="goalInput" placeholder="e.g. Find remote frontend developer jobs posted this week and list the best 5 with links&#10;e.g. https://example.com/article — summarize this&#10;e.g. Attach a file below and ask me to summarize it"></textarea>
-        <button id="micBtn" title="Speak your goal">🎤</button>
-      </div>
+    <div id="chatView">
+      <section class="composer">
+        <div class="composer-row">
+          <textarea id="goalInput" placeholder="e.g. Find remote frontend developer jobs posted this week and list the best 5 with links&#10;e.g. https://example.com/article — summarize this&#10;e.g. Attach a file below and ask me to summarize it"></textarea>
+          <button id="micBtn" title="Speak your goal">🎤</button>
+        </div>
 
-      <div class="file-row">
-        <label for="fileInput" class="file-label">📎 Attach a file (optional)</label>
-        <input type="file" id="fileInput" accept=".txt,.md,.csv,.json,.log" />
-        <span id="fileName"></span>
-      </div>
+        <div class="file-row">
+          <label for="fileInput" class="file-label">📎 Attach a file (optional)</label>
+          <input type="file" id="fileInput" accept=".txt,.md,.csv,.json,.log" />
+          <span id="fileName"></span>
+        </div>
 
-      <button id="runBtn">Run</button>
-    </section>
+        <button id="runBtn">Run</button>
+      </section>
 
-    <section id="status" class="status hidden">
-      <div class="spinner"></div>
-      <ul id="stepsList"></ul>
-    </section>
+      <section id="status" class="status hidden">
+        <div class="spinner"></div>
+        <ul id="stepsList"></ul>
+      </section>
 
-    <section class="results">
-      <h2>Results</h2>
-      <div id="resultsList"></div>
-    </section>
+      <section class="results">
+        <h2>Results</h2>
+        <div id="resultsList"></div>
+      </section>
+    </div>
+
+    <div id="dashboardView" class="hidden">
+      <section class="dashboard">
+        <h2>Dashboard</h2>
+        <div id="statCards" class="stat-cards"></div>
+        <h3>Integrations</h3>
+        <div id="integrationList" class="integration-list"></div>
+      </section>
+    </div>
   </div>
 
   <script src="app.js"></script>

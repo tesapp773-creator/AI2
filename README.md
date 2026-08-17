@@ -6,7 +6,9 @@ write to GitHub, open a pull request, trigger a Netlify deploy, or delegate
 a hard sub-task to a second, bigger AI model — then reports back with a
 clear answer, and emails you when it's done.
 
-## What this v12 does
+## What this v13 does
+- **Conversation threads**: a real sidebar of past conversations, like ChatGPT/Claude — start a "New chat", revisit old ones, and follow-ups like "undo that" or "now do X with it" actually use the real prior exchange in that thread, not just general memory facts.
+- **Dashboard**: a status view showing which integrations are connected (without exposing any keys) and quick stats — tasks today, active schedules, memory facts, conversations, backup key counts.
 - **Live progress**: watch a task actually work in real time — steps update live as it happens, including inline screenshots during browser automation, instead of a static "Still working..." message.
 - **Voice in and out**: tap the mic to speak a goal instead of typing, and tap "Read aloud" to hear any answer spoken back — both use the browser's built-in speech features, completely free, no API key.
 - **Refreshed visual identity**: a proper logo mark and gradient branding instead of a bare textbox.

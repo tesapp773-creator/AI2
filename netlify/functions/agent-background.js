@@ -35,13 +35,14 @@ exports.handler = async (event) => {
 
   const goal = (payload.goal || "").trim();
   const fileText = (payload.fileText || "").trim();
+  const conversationId = payload.conversationId || null;
   if (!goal) {
     return { statusCode: 400, body: JSON.stringify({ error: "Missing 'goal'" }) };
   }
 
   try {
     const supabase = getClient();
-    const result = await runTask(supabase, { goal, fileText });
+    const result = await runTask(supabase, { goal, fileText, conversationId });
     return { statusCode: 200, body: JSON.stringify(result) };
   } catch (err) {
     return { statusCode: 500, body: JSON.stringify({ error: err.message }) };
