@@ -20,6 +20,11 @@ const integrationList = document.getElementById("integrationList");
 
 let attachedFileText = "";
 
+// Tracks which completed answers have already played their typewriter
+// reveal, so re-polling/re-rendering doesn't replay the animation on
+// answers that already finished revealing.
+const seenAnswerIds = new Set();
+
 // The active conversation thread. null = "new chat" — a fresh id is
 // generated client-side the moment the first message in it is sent. Kept
 // in localStorage (a real deployed website, not a sandboxed Claude
@@ -230,6 +235,65 @@ function renderAnswerWithImages(container, text) {
   if (rest) container.appendChild(document.createTextNode(rest));
 }
 
+// Reveals a finished answer progressively, like it's being typed live —
+// reads well on screen recordings. Falls back to an instant render for
+// very long answers so a demo never sits waiting on a slow reveal.
+function typewriterReveal(container, text, speedMs = 12) {
+  const maxAnimatedLength = 2000;
+  if (text.length > maxAnimatedLength) {
+    renderAnswerWithImages(container, text);
+    return;
+  }
+
+  const urlRegex = /(https?:\/\/[^\s)]+\.(?:png|jpe?g|gif|webp))/gi;
+  const segments = [];
+  let lastIndex = 0;
+  let match;
+  while ((match = urlRegex.exec(text)) !== null) {
+    if (match.index > lastIndex) segments.push({ type: "text", value: text.slice(lastIndex, match.index) });
+    segments.push({ type: "image", value: match[1] });
+    lastIndex = match.index + match[1].length;
+  }
+  if (lastIndex < text.length) segments.push({ type: "text", value: text.slice(lastIndex) });
+
+  container.innerHTML = "";
+  let segIndex = 0;
+  let charIndex = 0;
+  let currentTextNode = null;
+
+  function step() {
+    if (segIndex >= segments.length) return;
+    const seg = segments[segIndex];
+    if (seg.type === "image") {
+      const img = document.createElement("img");
+      img.src = seg.value;
+      img.alt = "Screenshot";
+      img.loading = "lazy";
+      img.style.maxWidth = "100%";
+      img.style.borderRadius = "8px";
+      img.style.margin = "8px 0";
+      img.style.display = "block";
+      container.appendChild(img);
+      segIndex++;
+      setTimeout(step, speedMs);
+      return;
+    }
+    if (!currentTextNode) {
+      currentTextNode = document.createTextNode("");
+      container.appendChild(currentTextNode);
+    }
+    charIndex = Math.min(charIndex + 2, seg.value.length);
+    currentTextNode.textContent = seg.value.slice(0, charIndex);
+    if (charIndex >= seg.value.length) {
+      segIndex++;
+      charIndex = 0;
+      currentTextNode = null;
+    }
+    setTimeout(step, speedMs);
+  }
+  step();
+}
+
 async function renderResults() {
   const results = await fetchResults();
   resultsList.innerHTML = "";
@@ -290,7 +354,21 @@ async function renderResults() {
       });
       answerEl.appendChild(stopBtn);
     } else {
-      renderAnswerWithImages(answerEl, r.answer || "");
+      if (r.id && !seenAnswerIds.has(r.id)) {
+        seenAnswerIds.add(r.id);
+        typewriterReveal(answerEl, r.answer || "");
+      } else {
+        renderAnswerWithImages(answerEl, r.answer || "");
+      }
+      if (r.tool_count > 0) {
+        const badge = document.createElement("div");
+        badge.className = "tools-badge";
+        const toolLabel = r.tools_used && r.tools_used.length
+          ? r.tools_used.map((t) => t.replace(/_/g, " ")).join(", ")
+          : "";
+        badge.textContent = `✓ Used ${r.tool_count} tool call${r.tool_count === 1 ? "" : "s"}${toolLabel ? " — " + toolLabel : ""}`;
+        answerEl.appendChild(badge);
+      }
       if (r.answer) {
         const speakBtn = document.createElement("button");
         speakBtn.className = "speak-btn";

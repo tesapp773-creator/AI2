@@ -998,10 +998,25 @@ async function runTask(supabase, { goal, fileText, conversationId }) {
       finalAnswer = "I ran out of steps working on this — try breaking the goal into a smaller request.";
     }
 
+    // A quick "how much work did this actually take" summary — reads well
+    // as a small badge in the UI and is genuinely useful proof of what
+    // happened, not just decoration.
+    const toolCalls = messages.filter((m) => m.role === "assistant" && m.tool_calls).flatMap((m) => m.tool_calls);
+    const toolCount = toolCalls.length;
+    const toolsUsed = [...new Set(toolCalls.map((c) => c.function.name))];
+
     steps.push("Done.");
     await supabase
       .from("mkdai_tasks")
-      .update({ status: "done", answer: finalAnswer, sources: [], steps, updated_at: new Date().toISOString() })
+      .update({
+        status: "done",
+        answer: finalAnswer,
+        sources: [],
+        steps,
+        tool_count: toolCount,
+        tools_used: toolsUsed,
+        updated_at: new Date().toISOString(),
+      })
       .eq("id", taskId);
     await sendNotificationEmail({ goal, status: "done", answer: finalAnswer });
     await sendNotificationWhatsApp({ goal, status: "done", answer: finalAnswer });

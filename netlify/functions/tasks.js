@@ -11,7 +11,7 @@ exports.handler = async (event) => {
     const conversationId = event.queryStringParameters && event.queryStringParameters.conversationId;
     let query = supabase
       .from("mkdai_tasks")
-      .select("id, goal, status, answer, sources, error, steps, conversation_id, created_at")
+      .select("id, goal, status, answer, sources, error, steps, tool_count, tools_used, conversation_id, created_at")
       .order("created_at", { ascending: false })
       .limit(conversationId ? 200 : 50);
     if (conversationId) {
