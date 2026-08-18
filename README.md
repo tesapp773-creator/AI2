@@ -6,7 +6,9 @@ write to GitHub, open a pull request, trigger a Netlify deploy, or delegate
 a hard sub-task to a second, bigger AI model — then reports back with a
 clear answer, and emails you when it's done.
 
-## What this v14 does
+## What this v15 does
+- **Real document generation**: create actual PDF, Word (.docx), Excel (.xlsx), and PowerPoint (.pptx) files — verified as genuinely valid Office/PDF files, not just text dumped into a filename — with a real download link.
+- **Real code execution**: run code (Python, JavaScript, Java, C, C++, Go, Ruby, PHP, Bash) in a real sandbox and get the actual output — lets it verify code works instead of only writing it. Needs a free Judge0/RapidAPI key (50 executions/day free).
 - **Showcase polish**: a typewriter-style live reveal on finished answers, a "tools used" badge showing exactly what it did to complete a task, and a real branded app icon (installable as a home-screen app via the included PWA manifest).
 - **Conversation threads**: a real sidebar of past conversations, like ChatGPT/Claude — start a "New chat", revisit old ones, and follow-ups like "undo that" or "now do X with it" actually use the real prior exchange in that thread, not just general memory facts.
 - **Dashboard**: a status view showing which integrations are connected (without exposing any keys) and quick stats — tasks today, active schedules, memory facts, conversations, backup key counts.
@@ -87,6 +89,7 @@ Site configuration → Environment variables → add whichever of these you want
 | `GOOGLE_CLIENT_ID` | No (enables Calendar) | from Google Cloud Console — see step 5 |
 | `GOOGLE_CLIENT_SECRET` | No (needed with client ID) | from Google Cloud Console — see step 5 |
 | `GOOGLE_REFRESH_TOKEN` | No (needed with the above) | one-time token via OAuth Playground — see step 5 |
+| `JUDGE0_API_KEY` | No (enables real code execution) | free RapidAPI key for the Judge0 CE API — rapidapi.com, search "Judge0 CE", subscribe to the free plan |
 | `TWILIO_ACCOUNT_SID` | No (enables WhatsApp notifications) | from twilio.com console |
 | `TWILIO_AUTH_TOKEN` | No (needed with SID) | from twilio.com console |
 | `TWILIO_WHATSAPP_FROM` | No | overrides the default Twilio sandbox number `whatsapp:+14155238886` |

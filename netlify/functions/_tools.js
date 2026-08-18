@@ -20,6 +20,7 @@ const GEMINI_MODEL = process.env.GEMINI_MODEL || "gemini-3.5-flash";
 const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID;
 const GOOGLE_CLIENT_SECRET = process.env.GOOGLE_CLIENT_SECRET;
 const GOOGLE_REFRESH_TOKEN = process.env.GOOGLE_REFRESH_TOKEN;
+const JUDGE0_API_KEY = process.env.JUDGE0_API_KEY;
 const TWILIO_ACCOUNT_SID = process.env.TWILIO_ACCOUNT_SID;
 const TWILIO_AUTH_TOKEN = process.env.TWILIO_AUTH_TOKEN;
 const TWILIO_WHATSAPP_FROM = process.env.TWILIO_WHATSAPP_FROM || "whatsapp:+14155238886"; // Twilio's shared sandbox number
@@ -595,7 +596,50 @@ async function getGoogleAccessToken() {
   return data.access_token;
 }
 
-// List upcoming events on the primary calendar (default: next 7 days).
+// Run code in a real sandboxed environment via Judge0 (free tier: 50
+// executions/day, simple RapidAPI signup, no discretionary approval
+// needed). This actually EXECUTES code, unlike everything else MKDAI does
+// which only writes/commits it — lets the agent verify its own work.
+const JUDGE0_LANGUAGE_IDS = {
+  python: 71, python3: 71, py: 71,
+  javascript: 63, js: 63, node: 63, nodejs: 63,
+  java: 62,
+  c: 50,
+  cpp: 54, "c++": 54,
+  go: 60, golang: 60,
+  ruby: 72,
+  php: 68,
+  bash: 46, shell: 46, sh: 46,
+};
+
+async function runCode({ code, language = "python", stdin = "" }) {
+  if (!JUDGE0_API_KEY) {
+    throw new Error("JUDGE0_API_KEY is not set in Netlify environment variables (needed to run code).");
+  }
+  const languageId = JUDGE0_LANGUAGE_IDS[String(language).toLowerCase()] || JUDGE0_LANGUAGE_IDS.python;
+  const res = await fetch("https://judge0-ce.p.rapidapi.com/submissions?wait=true&base64_encoded=false", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "X-RapidAPI-Key": JUDGE0_API_KEY,
+      "X-RapidAPI-Host": "judge0-ce.p.rapidapi.com",
+    },
+    body: JSON.stringify({ language_id: languageId, source_code: code, stdin }),
+  });
+  const data = await res.json();
+  if (!res.ok) {
+    throw new Error(`Code execution API error (${res.status}): ${JSON.stringify(data).slice(0, 400)}`);
+  }
+  return {
+    stdout: data.stdout || "",
+    stderr: data.stderr || "",
+    compileOutput: data.compile_output || "",
+    status: data.status ? data.status.description : "unknown",
+    time: data.time,
+    memory: data.memory,
+  };
+}
+
 // Generate an image from a text prompt using Pollinations (completely
 // free, no signup or API key needed). The generated image is re-uploaded
 // to our own Supabase storage so the link stays stable and works the same
@@ -724,6 +768,7 @@ module.exports = {
   checkCalendar,
   createCalendarEvent,
   generateImage,
+  runCode,
   scheduleTask,
   listScheduledTasks,
   cancelScheduledTask,
