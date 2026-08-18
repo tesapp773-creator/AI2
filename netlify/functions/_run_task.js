@@ -453,8 +453,15 @@ const TOOLS = [
           title: { type: "string" },
           content: {
             type: "array",
-            description: "Each item is either a plain string (body paragraph) or {text, heading: 1|2|3}.",
-            items: { type: "object" },
+            description: "One item per paragraph. For a body paragraph, only set text. For a heading, also set heading to 1, 2, or 3.",
+            items: {
+              type: "object",
+              properties: {
+                text: { type: "string" },
+                heading: { type: "number", description: "1, 2, or 3 for a heading. Omit for a normal body paragraph." },
+              },
+              required: ["text"],
+            },
           },
           fileName: { type: "string", description: "e.g. \"letter.docx\". Defaults to document.docx." },
         },
@@ -493,8 +500,15 @@ const TOOLS = [
         properties: {
           slides: {
             type: "array",
-            description: "Each item is {title, bullets: [string, ...]} for one slide.",
-            items: { type: "object" },
+            description: "One item per slide.",
+            items: {
+              type: "object",
+              properties: {
+                title: { type: "string" },
+                bullets: { type: "array", items: { type: "string" }, description: "Bullet points for this slide." },
+              },
+              required: ["title"],
+            },
           },
           fileName: { type: "string", description: "e.g. \"pitch.pptx\". Defaults to presentation.pptx." },
         },
