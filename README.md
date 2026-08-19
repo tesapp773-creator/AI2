@@ -6,7 +6,10 @@ write to GitHub, open a pull request, trigger a Netlify deploy, or delegate
 a hard sub-task to a second, bigger AI model — then reports back with a
 clear answer, and emails you when it's done.
 
-## What this v15 does
+## What this v16 does
+- **Audio transcription**: turn a voice note/recording into text (via Groq's free Whisper endpoint — reuses the existing GROQ_API_KEY, no new signup).
+- **YouTube video understanding**: get a real transcript of a YouTube video's captions and summarize/answer questions about it — reads the actual content, doesn't guess from the title.
+- **Google Drive access**: list, read, and create files in the user's Google Drive — reuses the same Google login as Calendar.
 - **Real document generation**: create actual PDF, Word (.docx), Excel (.xlsx), and PowerPoint (.pptx) files — verified as genuinely valid Office/PDF files, not just text dumped into a filename — with a real download link.
 - **Real code execution**: run code (Python, JavaScript, Java, C, C++, Go, Ruby, PHP, Bash) in a real sandbox and get the actual output — lets it verify code works instead of only writing it. Needs a free Judge0/RapidAPI key (50 executions/day free).
 - **Showcase polish**: a typewriter-style live reveal on finished answers, a "tools used" badge showing exactly what it did to complete a task, and a real branded app icon (installable as a home-screen app via the included PWA manifest).

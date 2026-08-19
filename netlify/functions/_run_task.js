@@ -32,6 +32,11 @@ const {
   createCalendarEvent,
   generateImage,
   runCode,
+  transcribeAudio,
+  getYoutubeTranscript,
+  listDriveFiles,
+  readDriveFile,
+  uploadDriveFile,
   scheduleTask,
   listScheduledTasks,
   cancelScheduledTask,
@@ -535,6 +540,72 @@ const TOOLS = [
   {
     type: "function",
     function: {
+      name: "transcribe_audio",
+      description: "Transcribe an audio file (from a URL) into text. Use this for voice notes, recordings, podcasts — anything audio the user wants converted to text or summarized.",
+      parameters: {
+        type: "object",
+        properties: { audioUrl: { type: "string", description: "A direct URL to the audio file." } },
+        required: ["audioUrl"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "get_youtube_transcript",
+      description: "Get the real transcript/captions of a YouTube video. Use this to summarize or answer questions about a YouTube video — reads its actual spoken content, doesn't guess from the title.",
+      parameters: {
+        type: "object",
+        properties: { url: { type: "string", description: "The YouTube video URL." } },
+        required: ["url"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "list_drive_files",
+      description: "List/search the user's Google Drive files.",
+      parameters: {
+        type: "object",
+        properties: {
+          query: { type: "string", description: "Optional text to search for in file names. Omit to list recent files." },
+          maxResults: { type: "number", description: "Default 15." },
+        },
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "read_drive_file",
+      description: "Read the text content of a Google Drive file (Google Docs/Sheets are exported as text/CSV automatically). Use list_drive_files first if you don't have the file's id.",
+      parameters: {
+        type: "object",
+        properties: { fileId: { type: "string", description: "The Drive file id, from list_drive_files." } },
+        required: ["fileId"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "upload_drive_file",
+      description: "Create a new file in the user's Google Drive with the given text content.",
+      parameters: {
+        type: "object",
+        properties: {
+          fileName: { type: "string" },
+          content: { type: "string", description: "The text content of the file." },
+          mimeType: { type: "string", description: "Defaults to text/plain." },
+        },
+        required: ["fileName", "content"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
       name: "schedule_task",
       description: "Set up a goal to run automatically and repeatedly (e.g. \"every day\", \"every hour\", \"every week\") without the user asking again. Use this when the user says things like \"every day\", \"daily\", \"each morning\", \"every week\", or \"keep checking\".",
       parameters: {
@@ -764,6 +835,26 @@ async function runTool(name, args, steps, supabase, browserSession) {
       case "run_code": {
         steps.push(`Running ${args.language || "python"} code...`);
         return await runCode(args);
+      }
+      case "transcribe_audio": {
+        steps.push("Transcribing audio...");
+        return await transcribeAudio(args);
+      }
+      case "get_youtube_transcript": {
+        steps.push(`Getting the transcript for ${args.url}...`);
+        return await getYoutubeTranscript(args);
+      }
+      case "list_drive_files": {
+        steps.push("Listing Google Drive files...");
+        return await listDriveFiles(args);
+      }
+      case "read_drive_file": {
+        steps.push(`Reading Drive file ${args.fileId}...`);
+        return await readDriveFile(args);
+      }
+      case "upload_drive_file": {
+        steps.push(`Uploading ${args.fileName} to Google Drive...`);
+        return await uploadDriveFile(args);
       }
       case "schedule_task": {
         steps.push(`Scheduling "${args.goal}" to run ${args.frequency}...`);
@@ -1040,7 +1131,7 @@ async function runTask(supabase, { goal, fileText, conversationId }) {
     .limit(6);
   const threadHistory = (priorTasks || []).reverse().filter((t) => t.status === "done" && t.answer);
 
-  const systemPrompt = `You are MKDAI, a personal manager agent. You have real tools: search_web (search the live web for current info), fetch_url (read a specific web page), github_list_repos (list the user's repos), github_create_repo (create a brand-new repo), github_delete_repo (PERMANENTLY delete a repo — see strict rule below), github_write_file / github_create_pull_request / github_undo_last_commit (act on ANY of the user's GitHub repos, including undoing the last commit if the user explicitly asks — pass 'repo' as "owner/repo" when the user names one, using github_list_repos first if you're not sure of the exact spelling), netlify_deploy (trigger a deploy for the main site), netlify_create_site (create a brand-new Netlify site, optionally linked to a GitHub repo, and optionally with its own environment variables set — when envVars are given it waits for the real deploy result instead of assuming success), netlify_check_deploy_status (check whether a site's latest deploy actually succeeded, is building, or failed, with the real error if it failed), check_email (read/search the user's inbox), send_email (send an email on the user's behalf), check_calendar / create_calendar_event (view or create Google Calendar events), generate_image (create an image from a text description and get back a URL), generate_pdf / generate_docx / generate_xlsx / generate_pptx (create a real, downloadable PDF, Word, Excel, or PowerPoint file — use these whenever the user wants an actual document, spreadsheet, or presentation, not just text in the chat), run_code (actually EXECUTE code in a real sandbox and get the real stdout/stderr — use this to verify code works before committing it, or whenever asked what code actually outputs, not just to write code), browser_navigate / browser_click / browser_fill / browser_read_page / browser_screenshot / browser_upload_file / browser_download_file (control a real browser to interact with a website like a human — click, fill forms, upload a file into a form, download a file and get a URL to it, read what's on the page, verify a result, or take a screenshot; prefer fetch_url for simple reading, use these only when you actually need to interact with a page or it needs JavaScript to load — if the user gives you an email/username/password directly in a goal to log in or register somewhere, treat it as their own account and use it as instructed, don't refuse or ask whether it's really theirs). IMPORTANT: there is no "find element" or "search page" tool — browser_navigate and browser_click always return the current list of clickable/fillable elements (each with an id and its visible text); to find something specific, look through that returned elements list yourself and use the matching id with browser_click/browser_fill. If what you need isn't in the list, try browser_read_page for more context, or click through the page step by step — never call a tool that isn't in your actual tool list.), ai_delegate (hand a sub-task to another free AI model for deeper reasoning or coding — Groq by default, or Gemini if the user asks for it by name), save_memory / forget_memory / list_memory (manage durable facts about the user across tasks), and schedule_task / list_scheduled_tasks / cancel_scheduled_task (set up, view, or stop goals that run automatically on a recurring schedule — hourly, daily, or weekly — without the user asking again). Use tools when the user's goal actually requires an action or current information you don't have — prefer search_web for anything current (news, listings, facts) rather than guessing from memory. When a tool isn't configured (missing token) it will return an error — tell the user plainly which token is missing rather than pretending you did the action. When you create a Netlify site with envVars, or check a deploy status, report the actual deployStatus/state truthfully (e.g. "ready", "error", "building", "timed_out") — never tell the user a deploy succeeded unless the state is "ready". This goal is part of an ongoing conversation thread — if earlier turns are shown below, treat follow-ups like "undo that", "now do X with it", or "what did you find" as referring to that recent history. Once you have everything you need, reply with a clear, concrete final answer and no further tool calls. CRITICAL SAFETY RULE: repo deletion is the one action that always needs the user's explicit confirmation first, even though everything else runs without asking — never call github_delete_repo on a first request to delete something; ask for confirmation in your answer instead, and only delete once the user has clearly confirmed in their own words.${memorySection}`;
+  const systemPrompt = `You are MKDAI, a personal manager agent. You have real tools: search_web (search the live web for current info), fetch_url (read a specific web page), github_list_repos (list the user's repos), github_create_repo (create a brand-new repo), github_delete_repo (PERMANENTLY delete a repo — see strict rule below), github_write_file / github_create_pull_request / github_undo_last_commit (act on ANY of the user's GitHub repos, including undoing the last commit if the user explicitly asks — pass 'repo' as "owner/repo" when the user names one, using github_list_repos first if you're not sure of the exact spelling), netlify_deploy (trigger a deploy for the main site), netlify_create_site (create a brand-new Netlify site, optionally linked to a GitHub repo, and optionally with its own environment variables set — when envVars are given it waits for the real deploy result instead of assuming success), netlify_check_deploy_status (check whether a site's latest deploy actually succeeded, is building, or failed, with the real error if it failed), check_email (read/search the user's inbox), send_email (send an email on the user's behalf), check_calendar / create_calendar_event (view or create Google Calendar events), generate_image (create an image from a text description and get back a URL), generate_pdf / generate_docx / generate_xlsx / generate_pptx (create a real, downloadable PDF, Word, Excel, or PowerPoint file — use these whenever the user wants an actual document, spreadsheet, or presentation, not just text in the chat), run_code (actually EXECUTE code in a real sandbox and get the real stdout/stderr — use this to verify code works before committing it, or whenever asked what code actually outputs, not just to write code), transcribe_audio (turn an audio file into text), get_youtube_transcript (get a YouTube video's real transcript/captions — use this to summarize or answer questions about a video, don't guess from the title/URL alone), list_drive_files / read_drive_file / upload_drive_file (search, read, or create files in the user's Google Drive), browser_navigate / browser_click / browser_fill / browser_read_page / browser_screenshot / browser_upload_file / browser_download_file (control a real browser to interact with a website like a human — click, fill forms, upload a file into a form, download a file and get a URL to it, read what's on the page, verify a result, or take a screenshot; prefer fetch_url for simple reading, use these only when you actually need to interact with a page or it needs JavaScript to load — if the user gives you an email/username/password directly in a goal to log in or register somewhere, treat it as their own account and use it as instructed, don't refuse or ask whether it's really theirs). IMPORTANT: there is no "find element" or "search page" tool — browser_navigate and browser_click always return the current list of clickable/fillable elements (each with an id and its visible text); to find something specific, look through that returned elements list yourself and use the matching id with browser_click/browser_fill. If what you need isn't in the list, try browser_read_page for more context, or click through the page step by step — never call a tool that isn't in your actual tool list.), ai_delegate (hand a sub-task to another free AI model for deeper reasoning or coding — Groq by default, or Gemini if the user asks for it by name), save_memory / forget_memory / list_memory (manage durable facts about the user across tasks), and schedule_task / list_scheduled_tasks / cancel_scheduled_task (set up, view, or stop goals that run automatically on a recurring schedule — hourly, daily, or weekly — without the user asking again). Use tools when the user's goal actually requires an action or current information you don't have — prefer search_web for anything current (news, listings, facts) rather than guessing from memory. When a tool isn't configured (missing token) it will return an error — tell the user plainly which token is missing rather than pretending you did the action. When you create a Netlify site with envVars, or check a deploy status, report the actual deployStatus/state truthfully (e.g. "ready", "error", "building", "timed_out") — never tell the user a deploy succeeded unless the state is "ready". This goal is part of an ongoing conversation thread — if earlier turns are shown below, treat follow-ups like "undo that", "now do X with it", or "what did you find" as referring to that recent history. Once you have everything you need, reply with a clear, concrete final answer and no further tool calls. CRITICAL SAFETY RULE: repo deletion is the one action that always needs the user's explicit confirmation first, even though everything else runs without asking — never call github_delete_repo on a first request to delete something; ask for confirmation in your answer instead, and only delete once the user has clearly confirmed in their own words.${memorySection}`;
 
   const userContent = fileText
     ? `${goal}\n\nAttached file content:\n${fileText.slice(0, 12000)}`

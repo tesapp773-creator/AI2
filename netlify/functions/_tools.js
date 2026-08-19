@@ -577,7 +577,7 @@ async function listAllMemory(supabase) {
 // there's no persistent process here to cache one safely.
 async function getGoogleAccessToken() {
   if (!GOOGLE_CLIENT_ID || !GOOGLE_CLIENT_SECRET || !GOOGLE_REFRESH_TOKEN) {
-    throw new Error("GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET / GOOGLE_REFRESH_TOKEN are not all set in Netlify environment variables (needed for Calendar access).");
+    throw new Error("GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET / GOOGLE_REFRESH_TOKEN are not all set in Netlify environment variables (needed for Calendar and Drive access).");
   }
   const res = await fetch("https://oauth2.googleapis.com/token", {
     method: "POST",
@@ -638,6 +638,51 @@ async function runCode({ code, language = "python", stdin = "" }) {
     time: data.time,
     memory: data.memory,
   };
+}
+
+// Transcribe an audio file (from a URL) to text using Groq's free Whisper
+// endpoint — reuses the same GROQ_API_KEY already set up, no new signup.
+async function transcribeAudio({ audioUrl }) {
+  if (!GROQ_API_KEY) {
+    throw new Error("GROQ_API_KEY is not set in Netlify environment variables.");
+  }
+  const audioRes = await fetch(audioUrl);
+  if (!audioRes.ok) {
+    throw new Error(`Could not download the audio file (${audioRes.status}) from ${audioUrl}`);
+  }
+  const buffer = Buffer.from(await audioRes.arrayBuffer());
+  const form = new FormData();
+  form.append("file", new Blob([buffer]), "audio.mp3");
+  form.append("model", "whisper-large-v3-turbo");
+  const res = await fetch("https://api.groq.com/openai/v1/audio/transcriptions", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${GROQ_API_KEY}` },
+    body: form,
+  });
+  const data = await res.json();
+  if (!res.ok) {
+    throw new Error(`Groq transcription error (${res.status}): ${JSON.stringify(data).slice(0, 400)}`);
+  }
+  return { transcript: data.text || "" };
+}
+
+// Fetches a YouTube video's auto-generated captions/transcript — no API
+// key needed, just the video's public timed-text track. This is how
+// "summarize this YouTube video" actually works: MKDAI reads the real
+// transcript text, it doesn't watch the video.
+async function getYoutubeTranscript({ url }) {
+  const idMatch = url.match(/(?:v=|youtu\.be\/|embed\/)([a-zA-Z0-9_-]{11})/);
+  const videoId = idMatch ? idMatch[1] : url.trim();
+  if (!videoId || videoId.length !== 11) {
+    throw new Error("Could not find a valid YouTube video ID in that URL.");
+  }
+  const { YoutubeTranscript } = require("youtube-transcript");
+  const items = await YoutubeTranscript.fetchTranscript(videoId);
+  const text = items.map((i) => i.text).join(" ");
+  if (!text) {
+    throw new Error("No captions/transcript available for this video — it may not have any.");
+  }
+  return { transcript: text.slice(0, 15000) };
 }
 
 // Generate an image from a text prompt using Pollinations (completely
@@ -704,6 +749,78 @@ async function createCalendarEvent({ summary, description, startDateTime, endDat
   return { eventId: data.id, htmlLink: data.htmlLink, summary: data.summary };
 }
 
+// --- Google Drive --- (reuses the same Google login as Calendar above)
+
+async function listDriveFiles({ query, maxResults = 15 }) {
+  const accessToken = await getGoogleAccessToken();
+  const q = query ? `name contains '${query.replace(/'/g, "\\'")}'` : "";
+  const url = `https://www.googleapis.com/drive/v3/files?pageSize=${maxResults}&fields=files(id,name,mimeType,webViewLink,modifiedTime)${q ? `&q=${encodeURIComponent(q)}` : ""}`;
+  const res = await fetch(url, { headers: { Authorization: `Bearer ${accessToken}` } });
+  const data = await res.json();
+  if (!res.ok) {
+    throw new Error(`Google Drive API error (${res.status}): ${JSON.stringify(data).slice(0, 400)}`);
+  }
+  return {
+    files: (data.files || []).map((f) => ({ id: f.id, name: f.name, mimeType: f.mimeType, link: f.webViewLink, modified: f.modifiedTime })),
+  };
+}
+
+// Reads a file's text content — exports Google Docs/Sheets as plain
+// text/CSV, downloads other file types directly.
+async function readDriveFile({ fileId }) {
+  const accessToken = await getGoogleAccessToken();
+  const metaRes = await fetch(`https://www.googleapis.com/drive/v3/files/${fileId}?fields=name,mimeType`, {
+    headers: { Authorization: `Bearer ${accessToken}` },
+  });
+  const meta = await metaRes.json();
+  if (!metaRes.ok) {
+    throw new Error(`Google Drive API error (${metaRes.status}): ${JSON.stringify(meta).slice(0, 400)}`);
+  }
+
+  let url;
+  if (meta.mimeType === "application/vnd.google-apps.document") {
+    url = `https://www.googleapis.com/drive/v3/files/${fileId}/export?mimeType=text/plain`;
+  } else if (meta.mimeType === "application/vnd.google-apps.spreadsheet") {
+    url = `https://www.googleapis.com/drive/v3/files/${fileId}/export?mimeType=text/csv`;
+  } else {
+    url = `https://www.googleapis.com/drive/v3/files/${fileId}?alt=media`;
+  }
+  const res = await fetch(url, { headers: { Authorization: `Bearer ${accessToken}` } });
+  if (!res.ok) {
+    const errText = await res.text();
+    throw new Error(`Google Drive API error (${res.status}): ${errText.slice(0, 400)}`);
+  }
+  const text = await res.text();
+  return { name: meta.name, content: text.slice(0, 15000) };
+}
+
+async function uploadDriveFile({ fileName, content, mimeType = "text/plain" }) {
+  const accessToken = await getGoogleAccessToken();
+  const boundary = `mkdai_boundary_${Date.now()}`;
+  const metadata = { name: fileName };
+  const body =
+    `--${boundary}\r\n` +
+    `Content-Type: application/json; charset=UTF-8\r\n\r\n` +
+    `${JSON.stringify(metadata)}\r\n` +
+    `--${boundary}\r\n` +
+    `Content-Type: ${mimeType}\r\n\r\n` +
+    `${content}\r\n` +
+    `--${boundary}--`;
+  const res = await fetch("https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id,webViewLink", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      "Content-Type": `multipart/related; boundary=${boundary}`,
+    },
+    body,
+  });
+  const data = await res.json();
+  if (!res.ok) {
+    throw new Error(`Google Drive API error (${res.status}) uploading: ${JSON.stringify(data).slice(0, 400)}`);
+  }
+  return { fileId: data.id, link: data.webViewLink };
+}
+
 // Recurring tasks, stored in Supabase (table: mkdai_scheduled_tasks).
 // A Netlify Scheduled Function checks this table hourly and runs whatever
 // is due, so these keep running even if the app is never opened.
@@ -767,8 +884,13 @@ module.exports = {
   listAllMemory,
   checkCalendar,
   createCalendarEvent,
+  listDriveFiles,
+  readDriveFile,
+  uploadDriveFile,
   generateImage,
   runCode,
+  transcribeAudio,
+  getYoutubeTranscript,
   scheduleTask,
   listScheduledTasks,
   cancelScheduledTask,
