@@ -12,6 +12,7 @@ const backdrop = document.getElementById("backdrop");
 const menuBtn = document.getElementById("menuBtn");
 const newChatBtn = document.getElementById("newChatBtn");
 const dashboardNavBtn = document.getElementById("dashboardNavBtn");
+const notifyBtn = document.getElementById("notifyBtn");
 const convoList = document.getElementById("convoList");
 const chatView = document.getElementById("chatView");
 const dashboardView = document.getElementById("dashboardView");
@@ -19,6 +20,7 @@ const statCards = document.getElementById("statCards");
 const integrationList = document.getElementById("integrationList");
 
 let attachedFileText = "";
+let attachedImageUrl = "";
 
 // Tracks which completed answers have already played their typewriter
 // reveal, so re-polling/re-rendering doesn't replay the animation on
@@ -189,15 +191,82 @@ function speakText(text) {
   window.speechSynthesis.speak(utterance);
 }
 
+// Push notifications — real phone/browser alerts when a task finishes,
+// using self-generated VAPID keys (no external service, no signup needed).
+// The public key is safe to embed client-side — that's what it's for.
+const VAPID_PUBLIC_KEY = "BD9Up9WDeMyjMemn_UFzOWaeG7nrDqS7fHFbFsaNOQHdt4-7VyyN-2og8G_UsGOnfPtCJbMDKbYZ4zSlJIpVdT0";
+
+function urlBase64ToUint8Array(base64String) {
+  const padding = "=".repeat((4 - (base64String.length % 4)) % 4);
+  const base64 = (base64String + padding).replace(/-/g, "+").replace(/_/g, "/");
+  const rawData = atob(base64);
+  return Uint8Array.from([...rawData].map((c) => c.charCodeAt(0)));
+}
+
+if ("serviceWorker" in navigator) {
+  navigator.serviceWorker.register("/sw.js").catch(() => {});
+}
+
+notifyBtn.addEventListener("click", async () => {
+  if (!("serviceWorker" in navigator) || !("PushManager" in window)) {
+    alert("Push notifications aren't supported in this browser.");
+    return;
+  }
+  try {
+    const permission = await Notification.requestPermission();
+    if (permission !== "granted") return;
+    const registration = await navigator.serviceWorker.ready;
+    const subscription = await registration.pushManager.subscribe({
+      userVisibleOnly: true,
+      applicationServerKey: urlBase64ToUint8Array(VAPID_PUBLIC_KEY),
+    });
+    await fetch("/api/save-push-subscription", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ subscription }),
+    });
+    notifyBtn.textContent = "🔔 Notifications on";
+  } catch {
+    alert("Could not enable notifications — try again, or check your browser's notification settings.");
+  }
+});
+
 fileInput.addEventListener("change", async () => {
   const file = fileInput.files[0];
   if (!file) {
     fileNameEl.textContent = "";
     attachedFileText = "";
+    attachedImageUrl = "";
     return;
   }
   fileNameEl.textContent = file.name;
-  attachedFileText = await file.text();
+  attachedFileText = "";
+  attachedImageUrl = "";
+
+  if (file.type.startsWith("image/")) {
+    fileNameEl.textContent = `${file.name} (uploading...)`;
+    try {
+      const dataUrl = await new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result);
+        reader.onerror = reject;
+        reader.readAsDataURL(file);
+      });
+      const base64Data = dataUrl.split(",")[1];
+      const res = await fetch("/api/upload-attachment", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ fileName: file.name, base64Data, contentType: file.type }),
+      });
+      const data = await res.json();
+      attachedImageUrl = data.url || "";
+      fileNameEl.textContent = attachedImageUrl ? file.name : `${file.name} (upload failed)`;
+    } catch {
+      fileNameEl.textContent = `${file.name} (upload failed)`;
+    }
+  } else {
+    attachedFileText = await file.text();
+  }
 });
 
 async function fetchResults() {
@@ -437,11 +506,13 @@ async function runTask() {
   statusEl.classList.remove("hidden");
   setSteps(["Starting... (this now runs in the background — you can even close this tab, and you'll get an email when it's done if notifications are set up)"]);
 
+  const goalToSend = attachedImageUrl ? `${goal}\n\n(Attached image: ${attachedImageUrl})` : goal;
+
   try {
     await fetch("/api/agent", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ goal, fileText: attachedFileText, conversationId: currentConversationId }),
+      body: JSON.stringify({ goal: goalToSend, fileText: attachedFileText, conversationId: currentConversationId }),
     });
     // Background function returns instantly and keeps working server-side.
     // Poll for a while so the UI updates once it's actually done.
@@ -463,6 +534,7 @@ async function runTask() {
     fileInput.value = "";
     fileNameEl.textContent = "";
     attachedFileText = "";
+    attachedImageUrl = "";
     await renderResults();
   }
 }

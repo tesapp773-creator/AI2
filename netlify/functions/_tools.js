@@ -12,6 +12,8 @@ const GROQ_DELEGATE_MODEL = process.env.GROQ_DELEGATE_MODEL || "llama-3.3-70b-ve
 const TAVILY_API_KEY = process.env.TAVILY_API_KEY;
 const RESEND_API_KEY = process.env.RESEND_API_KEY;
 const NOTIFY_EMAIL = process.env.NOTIFY_EMAIL;
+const VAPID_PUBLIC_KEY = process.env.VAPID_PUBLIC_KEY;
+const VAPID_PRIVATE_KEY = process.env.VAPID_PRIVATE_KEY;
 const NETLIFY_API_TOKEN = process.env.NETLIFY_API_TOKEN;
 const EMAIL_IMAP_USER = process.env.EMAIL_IMAP_USER;
 const EMAIL_IMAP_APP_PASSWORD = process.env.EMAIL_IMAP_APP_PASSWORD;
@@ -523,6 +525,30 @@ async function sendNotificationWhatsApp({ goal, status, answer, error }) {
   }
 }
 
+// Sends a real push notification to the browser/PWA when a task finishes —
+// uses self-generated VAPID keys (no external service or signup needed).
+// Reads the saved subscription from Supabase; silently does nothing if the
+// user never enabled push notifications.
+async function sendPushNotification(supabase, { goal, status, answer, error }) {
+  if (!VAPID_PUBLIC_KEY || !VAPID_PRIVATE_KEY) return { skipped: true };
+  const { data: subs } = await supabase.from("mkdai_push_subscriptions").select("subscription").limit(1);
+  if (!subs || subs.length === 0) return { skipped: true };
+
+  const webpush = require("web-push");
+  webpush.setVapidDetails("mailto:mkdai@example.com", VAPID_PUBLIC_KEY, VAPID_PRIVATE_KEY);
+
+  const title = status === "error" ? "MKDAI task failed" : "MKDAI task done";
+  const body = status === "error" ? `${goal.slice(0, 80)} — ${error}`.slice(0, 150) : `${goal.slice(0, 60)}: ${answer}`.slice(0, 150);
+
+  try {
+    await webpush.sendNotification(subs[0].subscription, JSON.stringify({ title, body }));
+    return { sent: true };
+  } catch (err) {
+    // Never let a notification failure break the task itself.
+    return { sent: false, error: err.message };
+  }
+}
+
 // Persistent cross-task memory, stored in Supabase (table: mkdai_memory).
 // recallMemory is called automatically before every task; saveMemory is a
 // tool the agent can call when the user tells it something worth keeping.
@@ -683,6 +709,47 @@ async function getYoutubeTranscript({ url }) {
     throw new Error("No captions/transcript available for this video — it may not have any.");
   }
   return { transcript: text.slice(0, 15000) };
+}
+
+// Extracts text from an image (photo of a receipt, document, sign, etc.)
+// using Gemini's vision capability — reuses the existing GEMINI_API_KEY,
+// no separate OCR service or signup needed.
+async function ocrImage({ imageUrl }) {
+  if (!GEMINI_API_KEY) {
+    throw new Error("GEMINI_API_KEY is not set in Netlify environment variables (needed for OCR).");
+  }
+  const imgRes = await fetch(imageUrl);
+  if (!imgRes.ok) {
+    throw new Error(`Could not download the image (${imgRes.status}) from ${imageUrl}`);
+  }
+  const buffer = Buffer.from(await imgRes.arrayBuffer());
+  const base64 = buffer.toString("base64");
+  const contentType = imgRes.headers.get("content-type") || "image/png";
+
+  const res = await fetch(
+    `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "x-goog-api-key": GEMINI_API_KEY },
+      body: JSON.stringify({
+        contents: [
+          {
+            parts: [
+              { text: "Extract all readable text from this image, verbatim, preserving line breaks where meaningful. If there is no readable text, briefly describe the image instead." },
+              { inline_data: { mime_type: contentType, data: base64 } },
+            ],
+          },
+        ],
+      }),
+    }
+  );
+  const data = await res.json();
+  if (!res.ok) {
+    throw new Error(`Gemini OCR error (${res.status}): ${JSON.stringify(data).slice(0, 400)}`);
+  }
+  const parts = (data.candidates && data.candidates[0] && data.candidates[0].content && data.candidates[0].content.parts) || [];
+  const text = parts.map((p) => p.text || "").join("");
+  return { text: text.slice(0, 8000) };
 }
 
 // Generate an image from a text prompt using Pollinations (completely
@@ -878,6 +945,7 @@ module.exports = {
   searchWeb,
   sendNotificationEmail,
   sendNotificationWhatsApp,
+  sendPushNotification,
   recallMemory,
   saveMemory,
   forgetMemory,
@@ -891,6 +959,7 @@ module.exports = {
   runCode,
   transcribeAudio,
   getYoutubeTranscript,
+  ocrImage,
   scheduleTask,
   listScheduledTasks,
   cancelScheduledTask,

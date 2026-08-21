@@ -6,7 +6,9 @@ write to GitHub, open a pull request, trigger a Netlify deploy, or delegate
 a hard sub-task to a second, bigger AI model — then reports back with a
 clear answer, and emails you when it's done.
 
-## What this v16 does
+## What this v17 does
+- **OCR (read text from photos)**: extract text from a photo — receipts, documents, signs, handwritten notes — via Gemini's vision capability (reuses the existing GEMINI_API_KEY, no new signup). Attach an image the same way you'd attach a text file.
+- **Push notifications**: get a real notification on your phone/browser when a task finishes, using self-generated VAPID keys — no external service or account needed. Tap "🔔 Enable notifications" in the sidebar once to turn it on.
 - **Audio transcription**: turn a voice note/recording into text (via Groq's free Whisper endpoint — reuses the existing GROQ_API_KEY, no new signup).
 - **YouTube video understanding**: get a real transcript of a YouTube video's captions and summarize/answer questions about it — reads the actual content, doesn't guess from the title.
 - **Google Drive access**: list, read, and create files in the user's Google Drive — reuses the same Google login as Calendar.
@@ -93,6 +95,7 @@ Site configuration → Environment variables → add whichever of these you want
 | `GOOGLE_CLIENT_SECRET` | No (needed with client ID) | from Google Cloud Console — see step 5 |
 | `GOOGLE_REFRESH_TOKEN` | No (needed with the above) | one-time token via OAuth Playground — see step 5 |
 | `JUDGE0_API_KEY` | No (enables real code execution) | free RapidAPI key for the Judge0 CE API — rapidapi.com, search "Judge0 CE", subscribe to the free plan |
+| `VAPID_PUBLIC_KEY` / `VAPID_PRIVATE_KEY` | No (enables push notifications) | self-generated, no signup — see note below |
 | `TWILIO_ACCOUNT_SID` | No (enables WhatsApp notifications) | from twilio.com console |
 | `TWILIO_AUTH_TOKEN` | No (needed with SID) | from twilio.com console |
 | `TWILIO_WHATSAPP_FROM` | No | overrides the default Twilio sandbox number `whatsapp:+14155238886` |
