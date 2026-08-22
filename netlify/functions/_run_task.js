@@ -489,7 +489,7 @@ const TOOLS = [
           rows: {
             type: "array",
             description: "Each item is an array of cell values for one row, e.g. [[\"Alice\", 90], [\"Bob\", 85]].",
-            items: { type: "array" },
+            items: { type: "array", items: { type: "string" } },
           },
           fileName: { type: "string", description: "e.g. \"data.xlsx\". Defaults to spreadsheet.xlsx." },
         },
